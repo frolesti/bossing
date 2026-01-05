@@ -141,9 +141,8 @@ export default function SupermarketMap({
     getUserLocation();
   }, [getUserLocation]);
 
-  // Importar CSS de Leaflet
+  // Preparar el mapa quan el component es munta
   useEffect(() => {
-    import('leaflet/dist/leaflet.css');
     setMapReady(true);
   }, []);
 
