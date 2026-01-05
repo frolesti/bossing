@@ -1,7 +1,7 @@
-import { Router } from 'express';
+import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 
-const router = Router();
+const router: RouterType = Router();
 
 const nearbyQuerySchema = z.object({
   lat: z.coerce.number(),

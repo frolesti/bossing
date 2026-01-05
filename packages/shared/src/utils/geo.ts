@@ -1,4 +1,4 @@
-import type { Coordinates } from './types.js';
+import type { Coordinates } from '../types.js';
 
 /**
  * Calcula la distància entre dues coordenades usant la fórmula de Haversine

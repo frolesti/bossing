@@ -9,9 +9,6 @@ const withPWA = require('next-pwa')({
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@bossing/shared'],
-  experimental: {
-    serverActions: true,
-  },
 };
 
 module.exports = withPWA(nextConfig);
