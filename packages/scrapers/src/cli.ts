@@ -19,6 +19,9 @@ function parseArgs(): CliArgs {
       args.category = argv[++i];
     } else if (arg === '--verbose' || arg === '-v') {
       args.verbose = true;
+    } else if (!arg.startsWith('-') && !args.source) {
+      // Argument posicional = nom del scraper
+      args.source = arg;
     }
   }
 
@@ -74,6 +77,15 @@ async function main() {
   console.log(`   Total productes: ${totalProducts}`);
   console.log(`   Total errors: ${totalErrors}`);
   console.log(`   Temps total: ${totalDuration}ms`);
+  
+  // Mostrar alguns productes d'exemple
+  if (args.verbose && totalProducts > 0) {
+    console.log('\n📋 Exemples de productes:');
+    const sampleProducts = results[0]?.products.slice(0, 5) || [];
+    for (const product of sampleProducts) {
+      console.log(`   - ${product.name}: ${product.price}€ (${product.pricePerUnit}€/${product.unit})`);
+    }
+  }
   
   // TODO: Guardar resultats a la base de dades
   console.log('\n✨ Scraping completat!');
