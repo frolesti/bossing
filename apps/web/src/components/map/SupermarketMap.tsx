@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { MapPin, Navigation, Loader2 } from 'lucide-react';
+import { MapPin, Navigation, Loader2, RefreshCw } from 'lucide-react';
 
 // Tipus per a la ubicació
 interface Location {
@@ -14,11 +14,12 @@ interface Location {
 interface Supermarket {
   id: string;
   name: string;
+  chain?: string;
   address: string;
   lat: number;
   lng: number;
   distance?: number; // en km
-  logo?: string;
+  phone?: string;
 }
 
 // Props del component
@@ -49,59 +50,8 @@ const Circle = dynamic(
   { ssr: false }
 );
 
-// Supermercats de prova (després vindran de l'API)
-const MOCK_SUPERMARKETS: Supermarket[] = [
-  {
-    id: 'merc-1',
-    name: 'Mercadona',
-    address: 'Carrer Major, 123',
-    lat: 39.4699,
-    lng: -0.3763,
-  },
-  {
-    id: 'merc-2',
-    name: 'Mercadona',
-    address: 'Avinguda del Port, 45',
-    lat: 39.4589,
-    lng: -0.3653,
-  },
-  {
-    id: 'cons-1',
-    name: 'Consum',
-    address: 'Plaça de l\'Ajuntament, 10',
-    lat: 39.4695,
-    lng: -0.3773,
-  },
-  {
-    id: 'carf-1',
-    name: 'Carrefour',
-    address: 'Centre Comercial Ademuz',
-    lat: 39.4799,
-    lng: -0.3863,
-  },
-  {
-    id: 'dia-1',
-    name: 'DIA',
-    address: 'Carrer de Colón, 78',
-    lat: 39.4669,
-    lng: -0.3723,
-  },
-];
-
-// Funció per calcular distància (Haversine)
-function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371; // Radi de la Terra en km
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) *
-      Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
+// URL de l'API
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 export default function SupermarketMap({
   onSupermarketSelect,
@@ -109,6 +59,7 @@ export default function SupermarketMap({
 }: SupermarketMapProps) {
   const [userLocation, setUserLocation] = useState<Location | null>(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [isLoadingSupers, setIsLoadingSupers] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [supermarkets, setSupermarkets] = useState<Supermarket[]>([]);
   const [mapReady, setMapReady] = useState(false);
@@ -116,10 +67,31 @@ export default function SupermarketMap({
   // Ubicació per defecte: València
   const defaultLocation: Location = { lat: 39.4699, lng: -0.3763 };
 
+  // Carregar supermercats des de l'API
+  const fetchSupermarkets = useCallback(async (location: Location) => {
+    setIsLoadingSupers(true);
+    try {
+      const response = await fetch(
+        `${API_URL}/api/supermarkets/nearby?lat=${location.lat}&lng=${location.lng}&radius=5`
+      );
+      if (response.ok) {
+        const result = await response.json();
+        setSupermarkets(result.data || []);
+      } else {
+        console.error('Error fetching supermarkets:', response.status);
+      }
+    } catch (error) {
+      console.error('Error fetching supermarkets:', error);
+    } finally {
+      setIsLoadingSupers(false);
+    }
+  }, []);
+
   // Obtenir ubicació de l'usuari
   const getUserLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setLocationError('La geolocalització no està disponible');
+      fetchSupermarkets(defaultLocation);
       return;
     }
 
@@ -134,14 +106,9 @@ export default function SupermarketMap({
         };
         setUserLocation(location);
         setIsLocating(false);
-
-        // Calcular distàncies als supermercats
-        const withDistances = MOCK_SUPERMARKETS.map((s) => ({
-          ...s,
-          distance: calculateDistance(location.lat, location.lng, s.lat, s.lng),
-        })).sort((a, b) => (a.distance || 0) - (b.distance || 0));
-
-        setSupermarkets(withDistances);
+        
+        // Carregar supermercats propers
+        fetchSupermarkets(location);
       },
       (error) => {
         setIsLocating(false);
@@ -158,8 +125,8 @@ export default function SupermarketMap({
           default:
             setLocationError('Error desconegut');
         }
-        // Usar supermercats sense distància
-        setSupermarkets(MOCK_SUPERMARKETS);
+        // Usar ubicació per defecte
+        fetchSupermarkets(defaultLocation);
       },
       {
         enableHighAccuracy: true,
@@ -167,7 +134,7 @@ export default function SupermarketMap({
         maximumAge: 300000, // 5 minuts
       }
     );
-  }, []);
+  }, [fetchSupermarkets]);
 
   // Obtenir ubicació al carregar
   useEffect(() => {
@@ -194,10 +161,15 @@ export default function SupermarketMap({
     <div className="space-y-4">
       {/* Botó de localització */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Supermercats propers</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">Supermercats propers</h2>
+          {isLoadingSupers && (
+            <RefreshCw className="w-4 h-4 animate-spin text-green-600" />
+          )}
+        </div>
         <button
           onClick={getUserLocation}
-          disabled={isLocating}
+          disabled={isLocating || isLoadingSupers}
           className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
         >
           {isLocating ? (
