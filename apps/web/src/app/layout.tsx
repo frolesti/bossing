@@ -12,6 +12,9 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: 'Bossing',
   },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 };
 
 export const viewport: Viewport = {
