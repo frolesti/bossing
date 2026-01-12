@@ -91,26 +91,117 @@ interface MercadonaCategoriesResponse {
   results: MercadonaCategory[];
 }
 
+interface MercadonaCategoryStructure {
+  id: number;
+  name: string;
+  isGeneric: boolean;
+  children?: MercadonaCategoryStructure[];
+  products?: MercadonaProduct[];
+}
+
 /**
  * Scraper per a Mercadona
  * Utilitza l'API pública de tienda.mercadona.es
  */
 export class MercadonaScraper extends BaseScraper {
   private readonly apiUrl = 'https://tienda.mercadona.es/api';
+  private categoriesCache: MercadonaCategory[] | null = null;
+  // Cache per a estructures de categories individuals (Level 2 -> Level 3 mapping)
+  private categoryStructureCache: Map<number, MercadonaCategoryStructure> = new Map();
+  // Mapping L1 -> L2 (Root categories cache)
+  private rootCategoriesCache: Map<number, MercadonaCategory> = new Map();
 
   constructor() {
     super(config);
   }
 
   /**
+   * Obté l'estructura d'una categoria (si té subcategories o productes)
+   * Això permet identificar "Generators" (Level 3) com "Aceite de oliva".
+   */
+  async getCategoryStructure(id: number): Promise<MercadonaCategoryStructure | null> {
+    if (this.categoryStructureCache.has(id)) {
+        return this.categoryStructureCache.get(id)!;
+    }
+
+    try {
+        const response = await axios.get<MercadonaCategoryDetailResponse>(
+            `${this.apiUrl}/categories/${id}/`,
+            {
+                params: { lang: 'ca' },
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
+            }
+        );
+
+        const data = response.data;
+        
+        // Detectem si té subcategories (Level 3) -> Són els nostres "Generics"
+        const hasSubcategories = data.categories && data.categories.length > 0;
+        
+        const structure: MercadonaCategoryStructure = {
+            id: data.id,
+            name: data.name,
+            isGeneric: !hasSubcategories, // Si no té fills, és un generic/fulla
+            children: hasSubcategories ? data.categories!.map(c => ({
+                id: c.id,
+                name: c.name,
+                isGeneric: true, // Level 3 sempre el tractem com generic
+            })) : undefined,
+            products: hasSubcategories ? undefined : (data.categories as any) // Si no té fills de categoria, potser té 'categories' que en realitat són llistes de productes? No, l'estructura varia.
+        };
+
+        // Si és fulla, potser volem obtenir els productes immediatament
+        // En aquesta API, els productes estan dins de 'categories' (que fan de grups de visualització)
+        // ex: cat 420 (Oli oliva) -> categories: [{ products: [...] }]
+        
+        this.categoryStructureCache.set(id, structure);
+        return structure;
+
+    } catch (error) {
+        console.error(`[Mercadona] Error getting structure for ${id}:`, error);
+        return null;
+    }
+  }
+
+  /**
    * Obté totes les categories de Mercadona
+   * Retorna les subcategories (Nivell 2) que són les que tenen productes reals,
+   * per evitar problemes amb categories "contenidor" buides.
+    // Mapping L1 -> L2 (Root categories cache)
+    private rootCategoriesCache: Map<number, MercadonaCategory> = new Map();
+
+  /**
+   * Obté totes les categories de Mercadona (Nivell 1 - Roots)
+   * Aquestes són les categories generals (ex: "Forn i Pastisseria", "Fruita i Verdura")
    */
   async getCategories(): Promise<MercadonaCategory[]> {
     try {
-      const response = await axios.get<MercadonaCategoriesResponse>(
-        `${this.apiUrl}/categories/`
-      );
-      return response.data.results;
+      if (!this.categoriesCache) {
+        const response = await axios.get<MercadonaCategoriesResponse>(
+          `${this.apiUrl}/categories/`,
+          {
+            params: { lang: 'ca' },
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            }
+          }
+        );
+        this.categoriesCache = response.data.results;
+        
+        // Populate root cache
+        if (this.categoriesCache) {
+            this.categoriesCache.forEach(root => {
+                this.rootCategoriesCache.set(root.id, root);
+            });
+        }
+      }
+
+      // Retrobem directament les categories arrel (Nivell 1)
+      // Mantenim l'estructura original per permetre navegació
+      return this.categoriesCache || [];
+
     } catch (error) {
       console.error('[Mercadona] Error obtenint categories:', error);
       return [];
@@ -119,16 +210,68 @@ export class MercadonaScraper extends BaseScraper {
 
   /**
    * Obté els productes d'una categoria específica
+   * Gestiona automàticament categories pare (containers) i subcategories reals.
    */
   async getCategoryProducts(categoryId: number): Promise<MercadonaProduct[]> {
+    console.log(`[Mercadona] getCategoryProducts called for ID ${categoryId}`);
     try {
+      // 1. Assegurar que tenim la info de l'arbre de categories per saber si és pare
+      if (!this.categoriesCache) {
+          await this.getCategories();
+      }
+
+      // 2. Comprovar si és una categoria arrel (Pare)
+      // Les categories arrel NO tenen endpoint propi (/categories/ID returns 404),
+      // hem d'iterar sobre els seus fills.
+      const parentCategory = this.categoriesCache?.find(c => c.id === categoryId);
+
+      if (parentCategory && parentCategory.categories && parentCategory.categories.length > 0) {
+        // És una categoria PARE. Iterem els fills.
+        console.log(`[Mercadona] Categoria ${categoryId} és ROOT. Recuperant productes dels fills...`);
+        const products: MercadonaProduct[] = [];
+        
+        // Per performance, limitem a les 3 primeres subcategories inicialment
+        // (O podríem fer-ho totes en paral·lel amb Promise.all si calgués)
+        const subcategoriesToFetch = parentCategory.categories; // .slice(0, 4);
+
+        for (const sub of subcategoriesToFetch) {
+            try {
+                // Fetch directe a la subcategoria (que sí hauria de tenir endpoint)
+                const subProducts = await this.fetchSubCategoryProducts(sub.id);
+                products.push(...subProducts);
+            } catch (err) {
+                console.warn(`[Mercadona] Error parcial en subcategoria ${sub.id}`);
+            }
+        }
+        return products;
+      }
+
+      // 3. Si no és arrel coneguda, assumim que és una subcategoria o ID directe
+      return await this.fetchSubCategoryProducts(categoryId);
+
+    } catch (error) {
+      console.error(`[Mercadona] Error general obtenint categoria ${categoryId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Helper per fer la petició directa a una subcategoria (endpoint final)
+   */
+  private async fetchSubCategoryProducts(subId: number): Promise<MercadonaProduct[]> {
       const response = await axios.get<MercadonaCategoryDetailResponse>(
-        `${this.apiUrl}/categories/${categoryId}/`
+        `${this.apiUrl}/categories/${subId}/`,
+        {
+          params: { lang: 'ca' },
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          }
+        }
       );
       
       const products: MercadonaProduct[] = [];
       
-      // Recórrer subcategories
+      // La resposta directa sol tenir categories filles (nivell 3) amb productes
       if (response.data.categories) {
         for (const subcategory of response.data.categories) {
           if (subcategory.products) {
@@ -136,11 +279,60 @@ export class MercadonaScraper extends BaseScraper {
           }
         }
       }
-      
       return products;
+  }
+
+  /**
+   * Obté subcategories (drill down).
+   * - Si levelId és Root (L1) -> Retorna fills L2.
+   * - Si levelId és L2 -> Retorna fills L3 (Generics).
+   */
+  async getSubcategories(levelId: number): Promise<{id: string, name: string, image?: string, isGroup?: boolean}[]> {
+    
+    // 1. Check if it is a Root Category (cached)
+    if (this.rootCategoriesCache.has(levelId)) {
+        const root = this.rootCategoriesCache.get(levelId);
+        if (root?.categories) {
+            return root.categories.map((c: MercadonaSubcategory) => ({
+                id: c.id.toString(),
+                name: c.name,
+                isGroup: true // Indica que encara es pot baixar més
+            }));
+        }
+    }
+    
+    // 2. If not root, assume L2 and fetch L3
+    return this.getLevel3Categories(levelId);
+  }
+
+  /**
+   * Obté les subcategories de nivell 3 (Generics) donat un ID de nivell 2.
+   * Ex: Entra 112 (Aceite, vinagre, sal) -> Surt [420 (Aceite oliva), 422 (Aceite girasol)...]
+   */
+  async getLevel3Categories(level2Id: number): Promise<{id: string, name: string, image?: string, isGroup?: boolean}[]> {
+    try {
+        const response = await axios.get<MercadonaCategoryDetailResponse>(
+            `${this.apiUrl}/categories/${level2Id}/`,
+            {
+                params: { lang: 'ca' },
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
+            }
+        );
+
+        if (response.data.categories) {
+            return response.data.categories.map(c => ({
+                id: c.id.toString(),
+                name: c.name,
+                // Usem la imatge del primer producte com a representativa
+                image: c.products && c.products.length > 0 ? c.products[0].thumbnail : undefined
+            }));
+        }
+        return [];
     } catch (error) {
-      console.error(`[Mercadona] Error obtenint categoria ${categoryId}:`, error);
-      return [];
+        console.error(`[Mercadona] Error obtenint Level 3 per ${level2Id}:`, error);
+        return [];
     }
   }
 
