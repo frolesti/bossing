@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"const fs = require('fs'); fs.rmSync('dist', {recursive: true, force: true}); fs.rmSync('tsconfig.tsbuildinfo', {force: true})\" && tsc",
     "clean": "rm -rf dist node_modules"
   },
   "devDependencies": {
