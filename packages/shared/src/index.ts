@@ -16,6 +16,7 @@ export const SUPPORTED_SUPERMARKETS = [
   { id: 'dia', name: 'Dia', color: '#e30613' },
   { id: 'eroski', name: 'Eroski', color: '#e30613' },
   { id: 'alcampo', name: 'Alcampo', color: '#00a651' },
+  { id: 'ametller', name: 'Ametller Origen', color: '#005f61' },
 ] as const;
 
 export const PRODUCT_CATEGORIES = [
