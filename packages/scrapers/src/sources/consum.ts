@@ -262,7 +262,7 @@ export class ConsumScraper extends BaseScraper {
         `${this.apiUrl}/catalog/product`,
         {
           params: {
-            query,
+            q: query,
             limit: 50,
           },
           headers: {

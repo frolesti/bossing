@@ -1,200 +1,133 @@
-import axios from 'axios';
+import puppeteer from 'puppeteer';
 import { BaseScraper, type ScraperConfig } from '../base.js';
 import type { Product, ScrapedPrice } from '@bossing/shared';
 
 const config: ScraperConfig = {
   name: 'DIA',
   baseUrl: 'https://www.dia.es',
-  rateLimit: 1, // Conservador per evitar bloqueig
+  rateLimit: 5,
   enabled: true,
 };
 
-// Endpoints descoberts a GitHub
-const DIA_API_BASE = 'https://www.dia.es/api/v1';
-
-interface DIAProduct {
-  product_id: string;
-  name: string;
-  display_name: string;
-  price: number;
-  unit_price: number;
-  unit_measure: string;
-  original_price?: number;
-  image_url: string;
-  category: string;
-  ean?: string;
-  brand?: string;
-  in_stock: boolean;
-  is_offer: boolean;
-}
-
-interface DIACategory {
-  id: string;
-  name: string;
-  slug: string;
-  subcategories?: DIACategory[];
-}
-
-interface DIAProductsResponse {
-  products: DIAProduct[];
-  total: number;
-  page: number;
-}
-
-/**
- * Scraper per a DIA
- * 
- * DIA té una API que requereix cookies de sessió.
- * Actualment implementem scraping bàsic amb fallback.
- */
 export class DIAScraper extends BaseScraper {
-  private lastRequestTime = 0;
-
-  // Headers per simular navegador
-  private readonly browserHeaders = {
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'es-ES,es;q=0.9,ca;q=0.8',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://www.dia.es/',
-    'Origin': 'https://www.dia.es',
-    'X-Requested-With': 'XMLHttpRequest',
-  };
-
   constructor() {
     super(config);
   }
 
-  private async waitForRateLimit(): Promise<void> {
-    const minInterval = 1000 / this.config.rateLimit;
-    const elapsed = Date.now() - this.lastRequestTime;
-    if (elapsed < minInterval) {
-      await new Promise(resolve => setTimeout(resolve, minInterval - elapsed));
-    }
-    this.lastRequestTime = Date.now();
-  }
-
-  /**
-   * Obtenir categories principals via HTML parsing
-   */
-  async getCategories(): Promise<DIACategory[]> {
-    // Categories conegudes de DIA
-    return [
-      { id: '1', name: 'Frutas', slug: '/frutas' },
-      { id: '2', name: 'Verduras', slug: '/verduras' },
-      { id: '3', name: 'Carnes', slug: '/carnes' },
-      { id: '4', name: 'Pescados y mariscos', slug: '/pescados-y-mariscos' },
-      { id: '5', name: 'Huevos, leche y mantequilla', slug: '/huevos-leche-y-mantequilla' },
-      { id: '6', name: 'Yogures y postres', slug: '/yogures-y-postres' },
-      { id: '7', name: 'Charcutería y quesos', slug: '/charcuteria-y-quesos' },
-      { id: '8', name: 'Panes, harinas y masas', slug: '/panes-harinas-y-masas' },
-      { id: '9', name: 'Galletas, bollos y cereales', slug: '/galletas-bollos-y-cereales' },
-      { id: '10', name: 'Agua, refrescos y zumos', slug: '/agua-refrescos-y-zumos' },
-    ];
-  }
-
-  /**
-   * Intent d'obtenir productes via API
-   */
-  async getCategoryProducts(categorySlug: string): Promise<DIAProduct[]> {
-    try {
-      await this.waitForRateLimit();
-      
-      const response = await axios.get<DIAProductsResponse>(
-        `${DIA_API_BASE}/plp-back/reduced${categorySlug}`,
-        {
-          headers: this.browserHeaders,
-        }
-      );
-      
-      return response.data?.products || [];
-    } catch (error: any) {
-      // 403/404 significa que l'API no és accessible sense autenticació
-      if (error.response?.status === 403 || error.response?.status === 404) {
-        console.warn(`[DIA] API protegida per ${categorySlug}`);
-      } else {
-        console.error(`[DIA] Error obtenint productes de ${categorySlug}:`, error.message);
-      }
-      return [];
-    }
-  }
-
-  private mapProduct(product: DIAProduct, categoryName: string): ScrapedPrice {
-    return {
-      productId: `dia-${product.product_id}`,
-      name: product.display_name || product.name,
-      supermarket: 'DIA',
-      supermarketId: 'dia',
-      price: product.price,
-      originalPrice: product.original_price,
-      unit: product.unit_measure || 'ud',
-      pricePerUnit: product.unit_price,
-      category: categoryName,
-      imageUrl: product.image_url,
-      available: product.in_stock,
-      scrapedAt: new Date(),
-    };
-  }
-
-  async scrapeProducts(_category?: string): Promise<ScrapedPrice[]> {
-    const products: ScrapedPrice[] = [];
-
-    try {
-      console.log('[DIA] Intentant obtenir productes via API...');
-      
-      const categories = await this.getCategories();
-      console.log(`[DIA] Processant ${categories.length} categories...`);
-
-      for (const category of categories.slice(0, 5)) {
-        const categoryProducts = await this.getCategoryProducts(category.slug);
-        
-        if (categoryProducts.length > 0) {
-          products.push(...categoryProducts.map(p => this.mapProduct(p, category.name)));
-          console.log(`[DIA] ${category.name}: ${categoryProducts.length} productes`);
-        }
-      }
-
-      if (products.length === 0) {
-        console.warn('[DIA] API no accessible - considereu usar Puppeteer per scraping real');
-      }
-
-    } catch (error) {
-      console.error('[DIA] Error scraping:', error);
-    }
-
-    console.log(`[DIA] Total productes: ${products.length}`);
-    return products;
-  }
-
-  async scrapeProductDetails(productId: string): Promise<Product | null> {
-    console.log(`[DIA] Getting details for ${productId}...`);
-    return null;
+  private async parsePrice(priceStr: string | null | undefined): Promise<number> {
+    if (!priceStr) return 0;
+    // "1.234,56 €" -> 1.23456 -> 1234.56.
+    // Standard format is 1,23 € or 1.234,56 €
+    // Remove symbols and trim
+    const clean = priceStr.replace(/[^\d,\.]/g, '').trim();
+    // Replace comma with dot if it's the decimal separator
+    // If we have thousands like 1.000,00 -> we need to handle it.
+    // Simple heuristic for Spain price format: comma is decimal.
+    const normalized = clean.replace(/\./g, '').replace(',', '.');
+    return parseFloat(normalized) || 0;
   }
 
   async searchProducts(query: string): Promise<ScrapedPrice[]> {
-    console.log(`[DIA] Cercant: ${query}...`);
-    
+    console.log(`[DIA] Searching for: ${query} using Puppeteer...`);
+    let browser;
     try {
-      await this.waitForRateLimit();
-      
-      const response = await axios.get(
-        `${DIA_API_BASE}/search-service/search`,
-        {
-          params: { query, limit: 50 },
-          headers: this.browserHeaders,
-        }
-      );
+      // Launch Puppeteer.
+      // NOTE: In production/docker this might need args like --no-sandbox
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
 
-      const products = response.data?.products || [];
-      return products.map((p: DIAProduct) => this.mapProduct(p, 'Cerca'));
-    } catch (error: any) {
-      if (error.response?.status === 403 || error.response?.status === 404) {
-        console.warn('[DIA] Cerca protegida - API no accessible');
-      } else {
-        console.error('[DIA] Error cercant:', error.message);
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080 });
+      // Use a common user agent
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+      const url = `${config.baseUrl}/search?q=${encodeURIComponent(query)}`;
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
+
+      // Wait for product cards valid selector
+      try {
+         await page.waitForSelector('div[data-test-id="product-card"]', { timeout: 15000 });
+      } catch (e) {
+         console.warn(`[DIA] Timeout waiting for products for query "${query}"`);
+         return [];
       }
+
+      // Extract data
+      const productsData = await page.evaluate(() => {
+        const items: any[] = [];
+        const cards = document.querySelectorAll('div[data-test-id="product-card"]');
+        
+        cards.forEach(card => {
+            // Selectors based on inspection
+            const nameEl = card.querySelector('[data-test-id="search-product-card-name"], .search-product-card__product-name');
+            const priceEl = card.querySelector('[data-test-id="search-product-card-unit-price"], .search-product-card__active-price');
+            const unitPriceEl = card.querySelector('[data-test-id="search-product-card-kilo-price"], .search-product-card__price-per-unit');
+            const imgEl = card.querySelector('img[data-test-id="search-product-card-image"], .search-product-card__product-image');
+            const linkEl = card.querySelector('a[data-test-id="search-product-card-name"], a.search-product-card__product-link');
+            
+            if (nameEl && priceEl) {
+                items.push({
+                    name: nameEl.textContent?.trim(),
+                    priceText: priceEl.textContent?.trim(),
+                    unitPriceText: unitPriceEl?.textContent?.trim(),
+                    imageUrl: imgEl?.getAttribute('src'),
+                    link: linkEl?.getAttribute('href'),
+                    id: card.getAttribute('object_id') || linkEl?.getAttribute('href')?.split('/').pop()
+                });
+            }
+        });
+        return items;
+      });
+
+      const results: ScrapedPrice[] = [];
+      for (const p of productsData) {
+        const price = await this.parsePrice(p.priceText);
+        // Unit price usually format "(3,33 €/KILO)" or "(0,33 €/U)"
+        const pricePerUnit = await this.parsePrice(p.unitPriceText);
+        
+        // Extract unit string e.g. "KILO", "LITRO", "U"
+        let unit = 'ud';
+        if (p.unitPriceText && p.unitPriceText.includes('/')) {
+            const parts = p.unitPriceText.split('/');
+            if (parts.length > 1) {
+                unit = parts[1].replace(')', '').trim().toLowerCase();
+            }
+        }
+
+        results.push({
+          productId: `dia-${p.id}`,
+          name: p.name,
+          supermarket: 'DIA',
+          supermarketId: 'dia',
+          price: price,
+          originalPrice: price,
+          unit: unit,
+          pricePerUnit: pricePerUnit,
+          category: 'Search',
+          imageUrl: p.imageUrl ? (p.imageUrl.startsWith('http') ? p.imageUrl : `${config.baseUrl}${p.imageUrl}`) : '',
+          available: true,
+          scrapedAt: new Date(),
+        });
+      }
+
+      console.log(`[DIA] Found ${results.length} products`);
+      return results;
+
+    } catch (error) {
+      console.error('[DIA] Error details:', error);
       return [];
+    } finally {
+      if (browser) await browser.close();
     }
   }
+
+  // Not implemented fully yet
+  async getCategories() { return []; }
+  async getCategoryProducts() { return []; }
+  async scrapeProducts(category?: string) { return []; }
+  async scrapeProductDetails(productId: string) { return null; }
 }
 
 export const diaScraper = new DIAScraper();
