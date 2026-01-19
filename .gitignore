@@ -44,3 +44,7 @@ coverage/
 .cache/
 
 *.tsbuildinfo
+
+
+# TypeScript incremental build info
+*.tsbuildinfo
