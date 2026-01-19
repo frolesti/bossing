@@ -9,7 +9,8 @@ export interface ProductDefinition {
   isGroup?: boolean;
 }
 
-// Les dades ara es carreguen dinàmicament des de l'API
 export const PRODUCT_CATEGORIES = [];
+
 export const COMMON_PRODUCTS: ProductDefinition[] = [];
+
 
