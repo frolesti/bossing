@@ -7,9 +7,13 @@ import { supermarketsRouter } from './routes/supermarkets.js';
 import { shoppingListRouter } from './routes/shopping-list.js';
 import { optimizeRouter } from './routes/optimize.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { fileCache } from './services/cache.service.js';
 
 const app = express();
 const PORT = process.env.API_PORT || 3001;
+
+// Init Cache
+fileCache.load().catch(console.error);
 
 // Middleware
 app.use(helmet());

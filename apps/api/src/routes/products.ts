@@ -5,7 +5,9 @@ import {
   consumScraper, 
   carrefourScraper, 
   diaScraper, 
-  lidlScraper 
+  lidlScraper,
+  bonpreuScraper,
+  ametllerScraper
 } from '@bossing/scrapers';
 import type { ScrapedPrice } from '@bossing/shared';
 
@@ -19,6 +21,11 @@ const searchQuerySchema = z.object({
   page: z.coerce.number().default(1),
   limit: z.coerce.number().default(20),
 });
+
+import { fileCache } from '../services/cache.service.js';
+
+// Constants for caching
+const ONE_DAY_MS = 1000 * 60 * 60 * 24;
 
 // Helper per a icones de categories
 function getIconForCategory(name: string): string {
@@ -53,6 +60,7 @@ function getSupermarketIcon(supermarket: string): string {
         case 'carrefour': return '🔵';
         case 'lidl': return '🟡';
         case 'dia': return '🔴';
+        case 'bonpreu': return '🟠';
         default: return '🏪';
     }
 }
@@ -174,7 +182,8 @@ router.get('/category/:id', async (req, res) => {
                 searchSafe(consumScraper, 'Consum'),
                 searchSafe(carrefourScraper, 'Carrefour'),
                 searchSafe(lidlScraper, 'Lidl'),
-                searchSafe(diaScraper, 'Dia')
+                searchSafe(diaScraper, 'Dia'),
+                searchSafe(bonpreuScraper, 'Bonpreu')
             ];
         }
     }
@@ -229,9 +238,17 @@ router.get('/category/:id', async (req, res) => {
 router.get('/search', async (req, res) => {
   try {
     const query = searchQuerySchema.parse(req.query);
+    const cacheKey = `search:${query.q.toLowerCase()}`;
+
+    // 1. Check Cache
+    if (fileCache.isValid(cacheKey, ONE_DAY_MS)) {
+        const cached = fileCache.get(cacheKey);
+        console.log(`[Cache] Hit for "${query.q}"`);
+        return res.json(cached?.data);
+    }
     
     // Cerca real utilitzant tots els scrapers
-    console.log(`Searching for: ${query.q}`);
+    console.log(`[Cache] Miss for "${query.q}" - Scraping real-time...`);
     
     // Helper per gestionar errors de cerca individual
     const searchSafe = async (scraper: { searchProducts: (q: string) => Promise<ScrapedPrice[]> }, name: string) => {
@@ -243,12 +260,14 @@ router.get('/search', async (req, res) => {
         }
     };
 
-    const [mercadonaResults, consumResults, carrefourResults, diaResults, lidlResults] = await Promise.all([
+    const [mercadonaResults, consumResults, carrefourResults, diaResults, lidlResults, bonpreuResults, ametllerResults] = await Promise.all([
       searchSafe(mercadonaScraper, 'Mercadona'),
       searchSafe(consumScraper, 'Consum'),
       searchSafe(carrefourScraper, 'Carrefour'),
       searchSafe(diaScraper, 'Dia'),
-      searchSafe(lidlScraper, 'Lidl')
+      searchSafe(lidlScraper, 'Lidl'),
+      searchSafe(bonpreuScraper, 'Bonpreu'),
+      searchSafe(ametllerScraper, 'Ametller')
     ]);
 
     const allResults = [
@@ -256,7 +275,9 @@ router.get('/search', async (req, res) => {
         ...consumResults, 
         ...carrefourResults, 
         ...diaResults, 
-        ...lidlResults
+        ...lidlResults,
+        ...bonpreuResults,
+        ...ametllerResults
     ];
     
     // Deduplicate by name if needed, or allow both to show price comparison hint
@@ -288,14 +309,19 @@ router.get('/search', async (req, res) => {
         ],
       }));
   
-      res.json({
+      const responsePayload = {
         data: results,
         pagination: {
           page: query.page,
           limit: query.limit,
           total: results.length,
         },
-      });
+      };
+
+      // 2. Save to Cache
+      fileCache.set(cacheKey, responsePayload);
+
+      res.json(responsePayload);
     } catch (error) {
     console.error('Search error:', error);
     res.status(400).json({ error: 'Error cercant productes: ' + (error instanceof Error ? error.message : String(error)) });
