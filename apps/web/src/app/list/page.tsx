@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -16,9 +16,12 @@ import {
   ChevronRight,
   X,
   ArrowBigLeft,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { COMMON_PRODUCTS, PRODUCT_CATEGORIES, type ProductDefinition } from '@/lib/products';
+import { useShoppingList } from '@/context/ShoppingListContext';
 
 // Types
 interface CategoryDefinition {
@@ -26,20 +29,6 @@ interface CategoryDefinition {
     name: string;
     icon: string;
     color: string;
-}
-
-// Tipus
-interface ShoppingItem {
-  id: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  checked: boolean;
-  prices?: {
-    supermarket: string;
-    price: number;
-    productName: string;
-  }[];
 }
 
 interface PriceComparison {
@@ -50,58 +39,32 @@ interface PriceComparison {
     productName: string;
     price: number;
     found: boolean;
+    // New detailed fields
+    brand?: string;
+    image?: string;
+    pricePerUnit?: number;
+    unit?: string;
+    size?: number;
   }[];
 }
 
-// Productes de prova per la llista
-const INITIAL_ITEMS: ShoppingItem[] = [
-  { id: '1', name: 'Llet sencera', quantity: 2, unit: 'L', checked: false },
-  { id: '2', name: 'Pa de motlle', quantity: 1, unit: 'u', checked: false },
-  { id: '3', name: 'Ous (dotzena)', quantity: 1, unit: 'u', checked: false },
-  { id: '4', name: 'Tomàquets', quantity: 500, unit: 'g', checked: false },
-  { id: '5', name: 'Formatge ratllat', quantity: 1, unit: 'u', checked: false },
-];
-
-// Preus simulats per supermercat
-const MOCK_PRICES: Record<string, Record<string, { price: number; name: string }>> = {
-  mercadona: {
-    '1': { price: 0.85, name: 'Llet sencera Hacendado 1L' },
-    '2': { price: 1.15, name: 'Pa de motlle Hacendado' },
-    '3': { price: 2.10, name: 'Ous frescos M Hacendado x12' },
-    '4': { price: 1.49, name: 'Tomàquets pera 1kg' },
-    '5': { price: 1.75, name: 'Formatge ratllat 4 fromatges 200g' },
-  },
-  consum: {
-    '1': { price: 0.89, name: 'Llet sencera Consum 1L' },
-    '2': { price: 1.25, name: 'Pa de motlle Consum' },
-    '3': { price: 2.29, name: 'Ous L Consum x12' },
-    '4': { price: 1.65, name: 'Tomàquet de penjar 1kg' },
-    '5': { price: 1.89, name: 'Formatge ratllat mix 200g' },
-  },
-  carrefour: {
-    '1': { price: 0.79, name: 'Llet sencera Carrefour 1L' },
-    '2': { price: 1.09, name: 'Pa de motlle Carrefour' },
-    '3': { price: 2.19, name: 'Ous frescos L x12' },
-    '4': { price: 1.59, name: 'Tomàquet pera 1kg' },
-    '5': { price: 1.69, name: 'Formatge ratllat Carrefour 200g' },
-  },
-  dia: {
-    '1': { price: 0.82, name: 'Llet sencera DIA 1L' },
-    '2': { price: 0.99, name: 'Pa de motlle DIA' },
-    '3': { price: 1.99, name: 'Ous frescos DIA M x12' },
-    '4': { price: 1.39, name: 'Tomàquet madur 1kg' },
-    '5': { price: 1.59, name: 'Formatge ratllat DIA 200g' },
-  },
-};
+// MOCK_PRICES Removed. We will fetch from API.
+const MOCK_PRICES: Record<string, Record<string, { price: number; name: string }>> = {};
 
 function ShoppingListContent() {
   const searchParams = useSearchParams();
   const supermarketId = searchParams.get('supermarket');
 
-  const [items, setItems] = useState<ShoppingItem[]>(INITIAL_ITEMS);
+  const { items, addItem: contextAddItem, updateQuantity, toggleChecked, removeItem, clearList } = useShoppingList();
+  
   const [newItemName, setNewItemName] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  
+
+
+  // Stack per gestionar l'historial de navegació per categories (Deep navigation)
+  const [categoryHistory, setCategoryHistory] = useState<string[]>([]);
+  const selectedCategory = categoryHistory[categoryHistory.length - 1] || null;
   
   // Estats per dades dinàmiques (inicialitzats amb dades locals per si falla l'API)
   const [commonProducts, setCommonProducts] = useState<ProductDefinition[]>(COMMON_PRODUCTS);
@@ -115,6 +78,27 @@ function ShoppingListContent() {
   // Nou estat per a productes de categoria (dynamic fetch)
   const [categoryItems, setCategoryItems] = useState<ProductDefinition[]>([]);
   const [isLoadingCategory, setIsLoadingCategory] = useState(false);
+
+  // Refs per gestionar l'scroll en la navegació
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const scrollPositions = useRef<Record<number, number>>({});
+
+  // Restore scroll position when navigating back
+  useLayoutEffect(() => {
+    if (dropdownRef.current && !isLoadingCategory) {
+        // If we have a stored position for this level, restore it
+        if (scrollPositions.current[categoryHistory.length] !== undefined) {
+             // Use requestAnimationFrame to ensure rendering is complete
+             const scrollPos = scrollPositions.current[categoryHistory.length];
+             requestAnimationFrame(() => {
+                if(dropdownRef.current) dropdownRef.current.scrollTop = scrollPos;
+             });
+        } else {
+            // Otherwise (new level), scroll to top
+            dropdownRef.current.scrollTop = 0;
+        }
+    }
+  }, [categoryHistory, isLoadingCategory]);
 
   // Efecte per carregar productes quan es selecciona una categoria
   useEffect(() => {
@@ -228,6 +212,15 @@ function ShoppingListContent() {
   const [comparisons, setComparisons] = useState<PriceComparison[]>([]);
   const [isComparing, setIsComparing] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
+  const [expandedSupermarkets, setExpandedSupermarkets] = useState<string[]>([]);
+
+  const toggleSupermarketExpansion = (name: string) => {
+    setExpandedSupermarkets(prev => 
+      prev.includes(name) 
+        ? prev.filter(s => s !== name) 
+        : [...prev, name]
+    );
+  };
 
   // Filtrar suggeriments
   const suggestions = newItemName
@@ -236,131 +229,71 @@ function ShoppingListContent() {
       ? categoryItems
       : [];
 
-  // Afegir un nou ítem
+  // Afegir un nou ítem (Wrapper del context)
   const addItem = (itemToAdd?: { name: string, unit: string }) => {
     const name = itemToAdd ? itemToAdd.name : newItemName.trim();
     if (!name) return;
 
     const unit = itemToAdd ? itemToAdd.unit : 'u';
 
-    const newItem: ShoppingItem = {
-      id: Date.now().toString(),
-      name: name,
+    contextAddItem({
+      name,
       quantity: 1,
-      unit: unit,
-      checked: false,
-    };
+      unit,
+    });
 
-    setItems([...items, newItem]);
     setNewItemName('');
-    setShowSuggestions(false);
-    setSelectedCategory(null);
-  };
-
-  // Actualitzar quantitat
-  const updateQuantity = (id: string, delta: number) => {
-    setItems(
-      items.map((item) =>
-        item.id === id
-          ? { ...item, quantity: Math.max(1, item.quantity + delta) }
-          : item
-      )
-    );
-  };
-
-  // Marcar com a comprat
-  const toggleChecked = (id: string) => {
-    setItems(
-      items.map((item) =>
-        item.id === id ? { ...item, checked: !item.checked } : item
-      )
-    );
-  };
-
-  // Eliminar ítem
-  const removeItem = (id: string) => {
-    setItems(items.filter((item) => item.id !== id));
+    // Mantenim les suggerències obertes (o les reobrim) per permetre afegir múltiples ítems ràpidament
+    setShowSuggestions(true);
+    // Reiniciem l'historial en afegir un item
+    setCategoryHistory([]);
   };
 
   // Comparar preus
   const compareprices = async () => {
+    if (items.length === 0) return;
+    
     setIsComparing(true);
     setComparisons([]); 
     
-    // Supermercats suportats (identificadors del backend)
-    const activeSupermarkets = ['mercadona', 'consum']; 
-
-    // Estructura temporal per acumular resultats
-    const supermarketData: Record<string, { total: number; items: any[] }> = {};
-    activeSupermarkets.forEach(s => {
-        supermarketData[s] = { total: 0, items: [] };
-    });
-
     try {
-        // Cerquem cada producte de la llista en paral·lel
-        await Promise.all(items.map(async (item) => {
-            try {
-                // Cridem al endpoint de cerca unificada
-                const res = await fetch(`http://localhost:3001/api/products/search?q=${encodeURIComponent(item.name)}&limit=50`);
-                
-                if (res.ok) {
-                    const responseJson = await res.json();
-                    const products = responseJson.data || [];
-
-                    // Per a cada supermercat, trobem el millor preu
-                    activeSupermarkets.forEach(superId => {
-                        // Filtrar productes del supermercat actual
-                        const candidates = products.filter((p: any) => 
-                            p.supermarketId === superId || p.supermarket.toLowerCase() === superId
-                        );
-                        
-                        // Ordenar per preu (els més barats primer)
-                        candidates.sort((a: any, b: any) => a.price - b.price);
-                        
-                        const bestOption = candidates[0];
-
-                        if (bestOption) {
-                             // Calcular cost (preu unitari * quantitat)
-                             // NOTA: Caldria normalitzar unitats (kg, l, unitats) de forma robusta
-                             const cost = bestOption.price * item.quantity;
-                             
-                             supermarketData[superId].total += cost;
-                             supermarketData[superId].items.push({
-                                 itemId: item.id,
-                                 productName: bestOption.name,
-                                 price: cost,
-                                 found: true,
-                                 image: bestOption.imageUrl
-                             });
-                        } else {
-                            // Producte no trobat en aquest supermercat
-                            supermarketData[superId].items.push({
-                                itemId: item.id,
-                                productName: item.name,
-                                price: 0,
-                                found: false
-                            });
-                        }
-                    });
-                }
-            } catch (err) {
-                console.error(`Error cercant preus per ${item.name}:`, err);
-            }
-        }));
-
-        // Convertim l'objecte a l'array PriceComparison[]
-        const results: PriceComparison[] = Object.entries(supermarketData).map(([superId, data]) => ({
-            supermarket: superId,
-            total: data.total,
-            items: data.items
-        }));
-
-        // Ordenar del més barat al més car
-        results.sort((a, b) => a.total - b.total);
-
-        setComparisons(results);
-        setShowComparison(true);
-
+        const payload = {
+            items: items.map(i => ({ name: i.name, quantity: i.quantity })),
+            location: { lat: 41.3851, lng: 2.1734 }, 
+            prioritize: 'price'
+        };
+        
+        const res = await fetch('http://localhost:3001/api/optimize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (res.ok) {
+            const data = await res.json();
+            
+            const mappedComparisons: PriceComparison[] = data.routes.map((route: any) => ({
+                supermarket: route.stops[0].supermarket.name,
+                total: route.totalCost,
+                items: route.stops[0].items.map((item: any, idx: number) => ({
+                    itemId: `api-${idx}`, 
+                    productName: item.name,
+                    price: item.price,
+                    found: item.price > 0 && !item.name.includes('(No disponible)'),
+                    brand: item.brand,
+                    image: item.image,
+                    pricePerUnit: item.pricePerUnit,
+                    unit: item.unit,
+                    size: item.size
+                }))
+            }));
+            
+            // Sort by total price
+            mappedComparisons.sort((a, b) => a.total - b.total);
+            
+            setComparisons(mappedComparisons);
+            setShowComparison(true);
+        }
     } catch (e) {
         console.error('Error durant la comparació:', e);
     } finally {
@@ -436,6 +369,7 @@ function ShoppingListContent() {
             {/* Suggeriments desplegables */}
             {showSuggestions && (
                 <div 
+                  ref={dropdownRef}
                   className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 max-h-[350px] overflow-y-auto z-50 animate-in fade-in slide-in-from-top-2 duration-200"
                   onMouseDown={(e) => e.preventDefault()} // Evitar que es perdi el focus del input al clicar
                 >
@@ -477,11 +411,11 @@ function ShoppingListContent() {
                         // MODO ITEMS DE CATEGORIA
                         <div className="p-2">
                              <button 
-                                onClick={() => setSelectedCategory(null)}
+                                onClick={() => setCategoryHistory(prev => prev.slice(0, -1))}
                                 className="flex items-center gap-2 w-full p-2.5 text-gray-500 hover:text-green-600 hover:bg-gray-50 rounded-lg mb-2 transition-colors font-medium border-b border-gray-50"
                              >
                                 <ArrowBigLeft className="w-5 h-5" />
-                                Tornar a categories
+                                Tornar enrere
                              </button>
                              
                              {isLoadingCategory ? (
@@ -495,8 +429,14 @@ function ShoppingListContent() {
                                             key={product.name}
                                             onClick={() => {
                                                 if (product.isGroup && product.id) {
-                                                    // Si és un grup (L2), naveguem dins d'ell en lloc d'afegir-lo
-                                                    setSelectedCategory(product.id);
+                                                    // Si és un grup (L2), naveguem dins d'ell en lloc d'afegir-lo (Push to history)
+                                                    if (dropdownRef.current) {
+                                                        scrollPositions.current[categoryHistory.length] = dropdownRef.current.scrollTop;
+                                                    }
+                                                    // Esborrar posicions de nivells més profunds per evitar "zombie scrolls"
+                                                    delete scrollPositions.current[categoryHistory.length + 1];
+                                                    
+                                                    setCategoryHistory(prev => [...prev, product.id!]);
                                                 } else {
                                                     addItem(product);
                                                 }
@@ -510,7 +450,7 @@ function ShoppingListContent() {
                                             )}
                                             <div className="flex-1">
                                                 <p className="font-medium text-gray-800">{product.name}</p>
-                                                {product.isGroup && <p className="text-xs text-green-600">Veure opcions...</p>}
+                                                {/* Text verd eliminat a petició d'usuari */}
                                             </div>
                                             {product.isGroup ? (
                                                 <ChevronRight className="w-4 h-4 text-gray-400" />
@@ -543,7 +483,17 @@ function ShoppingListContent() {
                                         {productCategories.map((cat) => (
                                             <button
                                                 key={cat.id}
-                                                onClick={() => setSelectedCategory(cat.id)}
+                                                onClick={() => {
+                                                    if (dropdownRef.current) {
+                                                        scrollPositions.current[0] = dropdownRef.current.scrollTop;
+                                                    }
+                                                    // Esborrar posicions persistents anteriors de nivells profunds
+                                                    Object.keys(scrollPositions.current).forEach(key => {
+                                                        if (parseInt(key) > 0) delete scrollPositions.current[parseInt(key)];
+                                                    });
+                                                    
+                                                    setCategoryHistory([cat.id]);
+                                                }}
                                                 className={`flex flex-col items-center justify-center p-3 rounded-xl gap-2 transition-all hover:scale-[1.02] active:scale-95 ${cat.color}`}
                                             >
                                                 <span className="text-2xl">{cat.icon}</span>
@@ -602,47 +552,102 @@ function ShoppingListContent() {
 
             <div className="divide-y divide-gray-100">
               {comparisons.map((comparison, index) => (
-                <div
-                  key={comparison.supermarket}
-                  className={`p-4 ${index === 0 ? 'bg-green-50' : ''}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getSupermarketColor(
-                        comparison.supermarket
-                      )}`}
-                    >
-                      {comparison.supermarket[0].toUpperCase()}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">
-                          {getSupermarketDisplayName(comparison.supermarket)}
+                <div key={comparison.supermarket} className="flex flex-col">
+                  {/* Header de la targeta de supermercat */}
+                  <div
+                    onClick={() => toggleSupermarketExpansion(comparison.supermarket)}
+                    className={`p-4 ${index === 0 ? 'bg-green-50' : 'hover:bg-gray-50'} cursor-pointer transition-colors`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getSupermarketColor(
+                          comparison.supermarket
+                        )}`}
+                      >
+                        {comparison.supermarket[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">
+                            {getSupermarketDisplayName(comparison.supermarket)}
+                          </p>
+                          {index === 0 && (
+                            <span className="px-2 py-0.5 bg-green-600 text-white text-xs rounded-full">
+                              Millor preu
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-500">
+                          {comparison.items.filter((i) => i.found).length} de{' '}
+                          {items.length} productes trobats
                         </p>
-                        {index === 0 && (
-                          <span className="px-2 py-0.5 bg-green-600 text-white text-xs rounded-full">
-                            Millor preu
-                          </span>
+                      </div>
+                      <div className="text-right flex items-center gap-3">
+                        <div>
+                            <p className="text-lg font-bold text-green-600">
+                              {comparison.total.toFixed(2)} €
+                            </p>
+                            {index > 0 && comparisons[0] && (
+                              <p className="text-xs text-gray-500">
+                                +
+                                {(comparison.total - comparisons[0].total).toFixed(2)}{' '}
+                                €
+                              </p>
+                            )}
+                        </div>
+                        {expandedSupermarkets.includes(comparison.supermarket) ? (
+                           <ChevronUp className="w-5 h-5 text-gray-400" />
+                        ) : (
+                           <ChevronDown className="w-5 h-5 text-gray-400" />
                         )}
                       </div>
-                      <p className="text-sm text-gray-500">
-                        {comparison.items.filter((i) => i.found).length} de{' '}
-                        {items.length} productes trobats
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold text-green-600">
-                        {comparison.total.toFixed(2)} €
-                      </p>
-                      {index > 0 && comparisons[0] && (
-                        <p className="text-xs text-gray-500">
-                          +
-                          {(comparison.total - comparisons[0].total).toFixed(2)}{' '}
-                          €
-                        </p>
-                      )}
                     </div>
                   </div>
+
+                  {/* Desglossament de productes */}
+                  {expandedSupermarkets.includes(comparison.supermarket) && (
+                    <div className="bg-gray-50 px-4 pb-4 pt-2 border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
+                        <div className="space-y-3 mt-2">
+                             {/* Productes trobats */}
+                             {comparison.items.filter(i => i.found).length > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Disponibles</p>
+                                    {comparison.items.filter(i => i.found).map((item, idx) => (
+                                        <div key={`found-${idx}`} className="flex gap-3 text-sm bg-white p-2 rounded-lg border border-gray-100 items-start">
+                                            {item.image && (
+                                                <img src={item.image} alt={item.productName} className="w-12 h-12 object-contain bg-white rounded-md border border-gray-100 flex-shrink-0" />
+                                            )}
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex justify-between items-start gap-2">
+                                                    <span className="text-gray-800 font-medium line-clamp-2 leading-tight">{item.productName}</span>
+                                                    <span className="font-bold text-green-700 whitespace-nowrap">{item.price.toFixed(2)} €</span>
+                                                </div>
+                                                <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-x-2">
+                                                    {item.brand && <span className="font-semibold text-gray-600">{item.brand}</span>}
+                                                    {item.size && item.unit && <span>{item.size} {item.unit}</span>}
+                                                    {item.pricePerUnit && <span className="text-gray-400">({item.pricePerUnit.toFixed(2)} €/{item.unit})</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                             )}
+
+                             {/* Productes no trobats */}
+                             {comparison.items.filter(i => !i.found).length > 0 && (
+                                <div className="space-y-2 pt-2">
+                                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">No disponibles</p>
+                                    {comparison.items.filter(i => !i.found).map((item, idx) => (
+                                        <div key={`missing-${idx}`} className="flex justify-between items-center text-sm p-2 rounded-lg border border-dashed border-gray-300 opacity-60">
+                                            <span className="text-gray-500 italic">{item.productName.replace(' (No disponible)', '')}</span>
+                                            <span className="text-xs bg-gray-200 px-2 py-1 rounded text-gray-500">No trobat</span>
+                                        </div>
+                                    ))}
+                                </div>
+                             )}
+                        </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
