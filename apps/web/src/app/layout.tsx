@@ -4,9 +4,19 @@ import { Providers } from './providers';
 import { BottomNav } from '@/components/navigation/BottomNav';
 
 export const metadata: Metadata = {
-  title: 'Bossing - Compara preus de supermercats',
+  title: 'Bossing - La llista de la nevera 📝',
   description: 'Troba les millors ofertes i estalvia a la teva compra',
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/icons/icon.svg', type: 'image/svg+xml' },
+      { url: '/icons/icon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icons/icon-16.png', sizes: '16x16', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/icons/icon-180.png', sizes: '180x180', type: 'image/png' },
+    ],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -20,9 +30,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: '#16a34a',
+  themeColor: '#d4b58b',
 };
 
 export default function RootLayout({
@@ -32,9 +40,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ca">
-      <body className="bg-gray-50 min-h-screen pb-20">
+      <body className="min-h-screen text-ink">
         <Providers>
-          <main className="max-w-lg mx-auto">{children}</main>
+          {children}
           <BottomNav />
         </Providers>
       </body>

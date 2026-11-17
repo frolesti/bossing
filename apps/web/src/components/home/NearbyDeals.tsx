@@ -32,14 +32,14 @@ const mockDeals = [
 export function NearbyDeals() {
   return (
     <section>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Tag className="text-red-500" size={20} />
-          <h2 className="font-semibold text-gray-900">Ofertes a prop teu</h2>
+          <span className="text-lg">🏷️</span>
+          <h2 className="font-heading text-2xl text-ink">Ofertes a prop teu</h2>
         </div>
         <Link
           href="/deals"
-          className="flex items-center text-sm text-primary-600 font-medium"
+          className="flex items-center text-sm text-pen-400 hover:text-pen-600"
         >
           Més ofertes
           <ChevronRight size={16} />
@@ -47,26 +47,26 @@ export function NearbyDeals() {
       </div>
 
       <div className="space-y-3">
-        {mockDeals.map((deal) => (
+        {mockDeals.map((deal, i) => (
           <Link
             key={deal.id}
             href={`/product/${deal.id}`}
-            className="card flex items-center gap-4 active:bg-gray-50"
+            className="card flex items-center gap-4 active:shadow-note-hover transition-shadow"
+            style={{ transform: `rotate(${i % 2 === 0 ? '0.5' : '-0.3'}deg)` }}
           >
-            <div className="w-16 h-16 bg-gray-100 rounded-xl flex items-center justify-center">
-              {/* TODO: Imatge del producte */}
+            <div className="w-14 h-14 bg-paper-200 rounded-lg border-2 border-dashed border-paper-400 flex items-center justify-center flex-shrink-0">
               <span className="text-2xl">🛒</span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-900 truncate">{deal.name}</p>
-              <p className="text-sm text-gray-500">{deal.supermarket}</p>
-              <p className="text-xs text-gray-400">{deal.distance} km</p>
+              <p className="font-bold text-ink truncate">{deal.name}</p>
+              <p className="text-sm text-ink-light">{deal.supermarket}</p>
+              <p className="text-xs text-ink-faint">{deal.distance} km</p>
             </div>
-            <div className="text-right">
-              <p className="text-lg font-bold text-green-600">
+            <div className="text-right flex-shrink-0">
+              <span className="price-tag">
                 {deal.dealPrice.toFixed(2)}€
-              </p>
-              <p className="text-sm text-gray-400 line-through">
+              </span>
+              <p className="text-sm text-redpen-300 line-through mt-1">
                 {deal.originalPrice.toFixed(2)}€
               </p>
             </div>

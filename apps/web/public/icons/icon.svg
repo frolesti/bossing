@@ -1,4 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#16a34a"/>
-  <text x="50%" y="50%" font-family="Arial" font-size="250" fill="white" text-anchor="middle" dy=".3em">B</text>
+  <defs>
+    <linearGradient id="bagMain" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFD54F"/>
+      <stop offset="35%" stop-color="#FFC107"/>
+      <stop offset="70%" stop-color="#FFB300"/>
+      <stop offset="100%" stop-color="#FF8F00"/>
+    </linearGradient>
+    <linearGradient id="bagShadowLeft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#E6A200"/>
+      <stop offset="100%" stop-color="#FFC107"/>
+    </linearGradient>
+    <linearGradient id="bagFront" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#FFE082"/>
+      <stop offset="50%" stop-color="#FFC107"/>
+      <stop offset="100%" stop-color="#FFA000"/>
+    </linearGradient>
+    <linearGradient id="handle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE082"/>
+      <stop offset="100%" stop-color="#FFB300"/>
+    </linearGradient>
+    <radialGradient id="shadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="rgba(0,0,0,0.18)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+    </radialGradient>
+    <linearGradient id="shine" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.45)"/>
+      <stop offset="40%" stop-color="rgba(255,255,255,0.08)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Drop shadow -->
+  <ellipse cx="256" cy="470" rx="140" ry="22" fill="url(#shadow)"/>
+
+  <!-- Left side face -->
+  <path d="M130 200 L130 420 L170 440 L170 220 Z" fill="url(#bagShadowLeft)"/>
+  <!-- Right side face -->
+  <path d="M382 200 L382 420 L342 440 L342 220 Z" fill="#E6A200" opacity="0.6"/>
+  <!-- Front face -->
+  <rect x="130" y="200" width="252" height="240" rx="6" fill="url(#bagFront)"/>
+  <!-- Bottom fold -->
+  <path d="M130 420 L170 440 L342 440 L382 420 Z" fill="#E6A200" opacity="0.5"/>
+  <!-- Top rim -->
+  <rect x="125" y="190" width="262" height="22" rx="5" fill="url(#bagMain)" opacity="0.95"/>
+  <!-- Shine -->
+  <rect x="130" y="200" width="140" height="240" rx="6" fill="url(#shine)" opacity="0.6"/>
+
+  <!-- Left handle -->
+  <path d="M190 195 Q190 110 220 100 Q235 95 240 110 Q245 130 240 195"
+        fill="none" stroke="url(#handle)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M190 195 Q190 110 220 100 Q235 95 240 110 Q245 130 240 195"
+        fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="6" stroke-linecap="round"/>
+  <!-- Right handle -->
+  <path d="M272 195 Q272 110 292 100 Q307 95 322 110 Q332 130 322 195"
+        fill="none" stroke="url(#handle)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M272 195 Q272 110 292 100 Q307 95 322 110 Q332 130 322 195"
+        fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- B badge -->
+  <circle cx="256" cy="320" r="48" fill="#FF8F00" opacity="0.25"/>
+  <circle cx="256" cy="320" r="40" fill="rgba(255,255,255,0.15)"/>
+  <text x="256" y="320" font-family="Georgia,serif" font-size="56" font-weight="bold"
+        fill="white" text-anchor="middle" dy=".35em" opacity="0.85">B</text>
 </svg>
