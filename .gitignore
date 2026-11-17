@@ -42,6 +42,10 @@ coverage/
 # Misc
 *.tgz
 .cache/
+_x_images/
+data/search-cache.json
+apps/api/data/search-cache.json
+packages/scrapers/src/sources/*.bak
 
 *.tsbuildinfo
 
