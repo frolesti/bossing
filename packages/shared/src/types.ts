@@ -32,6 +32,8 @@ export interface ScrapedPrice {
   imageUrl?: string;
   available: boolean;
   scrapedAt: Date;
+  source?: { provider: string; warehouse: string; url: string };
+  packageSize?: { amount: number; unit: string };
 }
 
 export interface PriceHistory {

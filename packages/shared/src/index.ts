@@ -4,6 +4,8 @@ export * from './types.js';
 // Utils
 export * from './utils/geo.js';
 export * from './utils/products.js';
+export * from './utils/basket.js';
+export * from './catalog.js';
 
 // Constants
 export const SUPPORTED_SUPERMARKETS = [
