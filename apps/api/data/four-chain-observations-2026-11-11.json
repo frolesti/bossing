@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "captureId": "four-chain-live:2026-11-11",
+  "captureMethod": "official-http-and-ordinary-browser",
+  "pricingScope": "online-catalog",
+  "selection": "optimizer-selected compatible skimmed milk, not a full-catalog capture",
+  "automaticCaptureEnabled": false,
+  "sources": { "veritas": "ok", "plusfresc": "ok", "condis": "source_error", "sorli": "ok" },
+  "contexts": {
+    "veritas": { "provider": "veritas-storefront", "warehouse": "public-catalog" },
+    "plusfresc": { "provider": "plusfresc-rest", "warehouse": "centre:12;postal:25001" },
+    "condis": { "provider": "condis-storefront", "warehouse": "public-catalog" },
+    "sorli": { "provider": "sorli-storefront", "warehouse": "postal:08338" }
+  },
+  "observations": [
+    {"chain":"veritas","productId":"veritas-24059","name":"Leche desnatada ecol\u00f3gica Veritas 1l","price":1.55,"amount":1,"unit":"l","available":true,"observedAt":"2026-11-11T11:52:46.264Z","url":"https://www.veritas.es/compra/leche-desnatada-ecologica-veritas-1l-24059"},
+    {"chain":"plusfresc","productId":"plusfresc-012508","name":"Llet desnatada ALTEZA, 1 l","price":0.81,"amount":1,"unit":"l","available":true,"observedAt":"2026-11-11T11:52:47.140Z","url":"https://wscompra.plusfresc.cat/api/search/languages/ca/llet%20desnatada/products/12"},
+    {"chain":"condis","productId":"condis-704047","name":"LECHE CONDIS DESNATADA 1 L","price":0.84,"amount":1,"unit":"l","available":true,"observedAt":"2026-11-11T11:59:48.017Z","url":"https://compraonline.condis.es/leche-condis-desnatada-1-l/p/704047/es_ES"},
+    {"chain":"sorli","productId":"sorli-240393","name":"ALTEZA Llet Desnatada 1l","price":0.81,"amount":1,"unit":"l","available":true,"observedAt":"2026-11-11T12:00:01.634Z","url":"https://www.sorliclic.com/ca/p/llet-desnatada-1l/240393"}
+  ]
+}

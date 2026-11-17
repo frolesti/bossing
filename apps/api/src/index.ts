@@ -6,6 +6,8 @@ import { productsRouter } from './routes/products.js';
 import { supermarketsRouter } from './routes/supermarkets.js';
 import { shoppingListRouter } from './routes/shopping-list.js';
 import { optimizeRouter } from './routes/optimize.js';
+import { locationRouter } from './routes/location.js';
+import { historyRouter } from './routes/history.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { fileCache } from './services/cache.service.js';
 
@@ -30,6 +32,8 @@ app.use('/api/products', productsRouter);
 app.use('/api/supermarkets', supermarketsRouter);
 app.use('/api/shopping-list', shoppingListRouter);
 app.use('/api/optimize', optimizeRouter);
+app.use('/api/location', locationRouter);
+app.use('/api/history', historyRouter);
 
 // Error handling
 app.use(errorHandler);

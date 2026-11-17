@@ -21,7 +21,25 @@ interface Supermarket {
   schedule?: string;
 }
 
-// Supermercats de prova a València
+// Cadenes de supermercats suportades
+const SUPPORTED_CHAINS = [
+  { id: 'mercadona', name: 'Mercadona', icon: '🛒', hasOnlineScraper: true },
+  { id: 'consum', name: 'Consum', icon: '🟧', hasOnlineScraper: true },
+  { id: 'carrefour', name: 'Carrefour', icon: '🔵', hasOnlineScraper: true },
+  { id: 'dia', name: 'DIA', icon: '🔴', hasOnlineScraper: true },
+  { id: 'lidl', name: 'Lidl', icon: '🟡', hasOnlineScraper: false },
+  { id: 'bonpreu', name: 'Bonpreu', icon: '🟠', hasOnlineScraper: true },
+  { id: 'ametller', name: 'Ametller Origen', icon: '🍊', hasOnlineScraper: true },
+  { id: 'caprabo', name: 'Caprabo', icon: '🟢', hasOnlineScraper: true },
+  { id: 'lasirena', name: 'La Sirena', icon: '🐟', hasOnlineScraper: true },
+  { id: 'plusfresc', name: 'Plusfresc', icon: '🟣', hasOnlineScraper: true },
+  { id: 'condis', name: 'Condis', icon: '🔶', hasOnlineScraper: true },
+  { id: 'bonarea', name: 'bonÀrea', icon: '🛒', hasOnlineScraper: true },
+  { id: 'sorli', name: 'Sorli', icon: '🛒', hasOnlineScraper: true },
+  { id: 'eroski', name: 'Eroski', icon: '🟥', hasOnlineScraper: true },
+];
+
+// Supermercats de prova a València / Barcelona
 const SUPERMARKETS_DB: Supermarket[] = [
   // Mercadona
   { id: 'merc-1', name: 'Mercadona', chain: 'mercadona', address: 'C/ Colón, 15, 46004 València', lat: 39.4699, lng: -0.3763, phone: '963 521 234' },
@@ -43,6 +61,20 @@ const SUPERMARKETS_DB: Supermarket[] = [
   // Lidl
   { id: 'lidl-1', name: 'Lidl', chain: 'lidl', address: 'Av. del Cid, 65, 46018 València', lat: 39.4523, lng: -0.4034, phone: '900 800 543' },
   { id: 'lidl-2', name: 'Lidl', chain: 'lidl', address: 'C/ Músic Ginés, 3, 46022 València', lat: 39.4867, lng: -0.3623, phone: '900 800 543' },
+  // Bonpreu (Barcelona area)
+  { id: 'bonp-1', name: 'Bonpreu', chain: 'bonpreu', address: 'Rambla de Catalunya, 50, 08007 Barcelona', lat: 41.3910, lng: 2.1641 },
+  // Ametller Origen (Barcelona area)
+  { id: 'amet-1', name: 'Ametller Origen', chain: 'ametller', address: 'Passeig de Gràcia, 44, 08007 Barcelona', lat: 41.3932, lng: 2.1637 },
+  // Caprabo (Barcelona area)
+  { id: 'capr-1', name: 'Caprabo', chain: 'caprabo', address: 'C/ Aragó, 270, 08007 Barcelona', lat: 41.3923, lng: 2.1631 },
+  // La Sirena
+  { id: 'sire-1', name: 'La Sirena', chain: 'lasirena', address: 'C/ Gran de Gràcia, 15, 08012 Barcelona', lat: 41.3998, lng: 2.1564 },
+  // Plusfresc (Lleida area)
+  { id: 'plus-1', name: 'Plusfresc', chain: 'plusfresc', address: 'Av. Prat de la Riba, 30, 25004 Lleida', lat: 41.6176, lng: 0.6222 },
+  // Condis (Barcelona area)
+  { id: 'cond-1', name: 'Condis', chain: 'condis', address: 'C/ Consell de Cent, 100, 08015 Barcelona', lat: 41.3832, lng: 2.1597 },
+  // Eroski
+  { id: 'eros-1', name: 'Eroski', chain: 'eroski', address: 'C.C. Glòries, Av. Diagonal, 208, 08018 Barcelona', lat: 41.4035, lng: 2.1882 },
   // Aldi
   { id: 'aldi-1', name: 'Aldi', chain: 'aldi', address: 'C/ Poeta al Russafí, 2, 46019 València', lat: 39.4534, lng: -0.4156, phone: '900 123 456' },
 ];
@@ -61,6 +93,22 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+
+// Llistar totes les cadenes suportades
+router.get('/', async (_req, res) => {
+  res.json({ 
+    data: SUPPORTED_CHAINS,
+    meta: { total: SUPPORTED_CHAINS.length }
+  });
+});
+
+// Llistar cadenes amb scrapers actius
+router.get('/chains', async (_req, res) => {
+  res.json({ 
+    data: SUPPORTED_CHAINS.filter(c => c.hasOnlineScraper),
+    meta: { total: SUPPORTED_CHAINS.filter(c => c.hasOnlineScraper).length }
+  });
+});
 
 // Obtenir supermercats propers
 router.get('/nearby', async (req, res) => {

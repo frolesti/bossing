@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "captureId": "official-html:additional:2026-11-11",
+  "captureMethod": "ordinary-browser",
+  "source": "official-product-html",
+  "pricingScope": "public-catalog",
+  "automaticCaptureEnabled": false,
+  "equivalentToFixedBasket": false,
+  "contexts": {
+    "eroski": { "provider": "eroski-storefront", "warehouse": "public-catalog" },
+    "aldi": { "provider": "aldi-storefront", "warehouse": "public-catalog" }
+  },
+  "observations": [
+    {"chain":"eroski","foodId":"flour","productId":"eroski-362442","name":"Harina de trigo EROSKI BASIC, paquete 1 kg","price":0.72,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:19:45.440Z","url":"https://supermercado.eroski.es/es/productdetail/362442-harina-de-trigo-eroski-basic-paquete-1-kg/"},
+    {"chain":"eroski","foodId":"sugar","productId":"eroski-26913889","name":"Az\u00facar blanco EROSKI, paquete 1 kg","price":0.9,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:19:50.415Z","url":"https://supermercado.eroski.es/es/productdetail/26913889-azucar-blanco-eroski-paquete-1-kg/"},
+    {"chain":"eroski","foodId":"salt","productId":"eroski-917372","name":"Sal marina fina EROSKI BASIC, paquete 1 kg","price":0.4,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:19:55.412Z","url":"https://supermercado.eroski.es/es/productdetail/917372-sal-marina-fina-eroski-basic-paquete-1-kg/"},
+    {"chain":"eroski","foodId":"olive-oil","productId":"eroski-371658","name":"Aceite de oliva virgen extra EROSKI, botella 1 litro","price":4.1,"amount":1,"unit":"l","available":true,"observedAt":"2026-11-11T10:19:59.848Z","url":"https://supermercado.eroski.es/es/productdetail/371658-aceite-de-oliva-virgen-extra-eroski-botella-1-litro/"},
+    {"chain":"eroski","foodId":"sunflower-oil","productId":"eroski-317826","name":"Aceite de girasol LANISOL, botella 1 litro","price":1.85,"amount":1,"unit":"l","available":true,"observedAt":"2026-11-11T10:20:05.137Z","url":"https://supermercado.eroski.es/es/productdetail/317826-aceite-de-girasol-lanisol-botella-1-litro/"},
+    {"chain":"eroski","foodId":"pasta","productId":"eroski-361998","name":"Macarrones EROSKI basic, paquete 500 g","price":0.85,"amount":0.5,"unit":"kg","available":true,"observedAt":"2026-11-11T10:20:13.774Z","url":"https://supermercado.eroski.es/es/productdetail/361998-macarrones-eroski-basic-paquete-500-g/"},
+    {"chain":"eroski","foodId":"lentils","productId":"eroski-25948431","name":"Lentejas cocidas EROSKI, frasco 400 g","price":0.9,"amount":0.4,"unit":"kg","available":true,"observedAt":"2026-11-11T10:20:49.762Z","url":"https://supermercado.eroski.es/es/productdetail/25948431-lentejas-cocidas-eroski-frasco-400-g/"},
+    {"chain":"eroski","foodId":"chickpeas","productId":"eroski-25948423","name":"Garbanzo cocido EROSKI, frasco 400 g","price":0.8,"amount":0.4,"unit":"kg","available":true,"observedAt":"2026-11-11T10:20:53.781Z","url":"https://supermercado.eroski.es/es/productdetail/25948423-garbanzo-cocido-eroski-frasco-400-g/"},
+    {"chain":"eroski","foodId":"tomato","productId":"eroski-320267","name":"Tomate triturado EROSKI basic, lata 800 g","price":1,"amount":0.8,"unit":"kg","available":true,"observedAt":"2026-11-11T10:20:58.464Z","url":"https://supermercado.eroski.es/es/productdetail/320267-tomate-triturado-eroski-basic-lata-800-g/"},
+    {"chain":"eroski","foodId":"oats","productId":"eroski-26747618","name":"Copos de avena integrales suaves EROSKI, paquete 500 g","price":0.77,"amount":0.5,"unit":"kg","available":true,"observedAt":"2026-11-11T10:21:02.734Z","url":"https://supermercado.eroski.es/es/productdetail/26747618-copos-de-avena-integrales-suaves-eroski-paquete-500-g/"},
+    {"chain":"eroski","foodId":"bread","productId":"eroski-17946732","name":"Pan de molde con corteza EROSKI basic, paquete 820 g","price":1.15,"amount":0.82,"unit":"kg","available":true,"observedAt":"2026-11-11T10:21:06.992Z","url":"https://supermercado.eroski.es/es/productdetail/17946732-pan-de-molde-con-corteza-eroski-basic-paquete-820-g/"},
+    {"chain":"eroski","foodId":"yogurt","productId":"eroski-4810149","name":"Yogur natural EROSKI BASIC, pack 8x125 g","price":1.33,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:21:12.606Z","url":"https://supermercado.eroski.es/es/productdetail/4810149-yogur-natural-eroski-basic-pack-8x125-g/"},
+    {"chain":"aldi","foodId":"rice","productId":"aldi-768700","name":"Arroz redondo","price":1.09,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:21:24.092Z","url":"https://www.aldi.es/producto/arroz-redondo-768700.html"},
+    {"chain":"aldi","foodId":"flour","productId":"aldi-70000","name":"Harina de trigo","price":0.69,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:21:29.638Z","url":"https://www.aldi.es/producto/harina-de-trigo-70000.html"},
+    {"chain":"aldi","foodId":"olive-oil","productId":"aldi-662500","name":"Aceite de oliva virgen extra","price":12.15,"amount":3,"unit":"l","available":true,"observedAt":"2026-11-11T10:21:34.102Z","url":"https://www.aldi.es/producto/aceite-de-oliva-virgen-extra-662500.html"},
+    {"chain":"aldi","foodId":"sunflower-oil","productId":"aldi-112000","name":"Aceite refinado de girasol","price":8.55,"amount":5,"unit":"l","available":true,"observedAt":"2026-11-11T10:21:38.316Z","url":"https://www.aldi.es/producto/aceite-refinado-de-girasol-112000.html"},
+    {"chain":"aldi","foodId":"pasta","productId":"aldi-558000","name":"Macarr\u00f3n rayado","price":0.79,"amount":0.5,"unit":"kg","available":true,"observedAt":"2026-11-11T10:21:43.295Z","url":"https://www.aldi.es/producto/macarron-rayado-558000.html"},
+    {"chain":"aldi","foodId":"oats","productId":"aldi-273600","name":"Copos de avena integral","price":0.75,"amount":0.5,"unit":"kg","available":true,"observedAt":"2026-11-11T10:22:31.577Z","url":"https://www.aldi.es/producto/copos-de-avena-integral-273600.html"},
+    {"chain":"aldi","foodId":"bread","productId":"aldi-249200","name":"Pan de molde blanco","price":1.09,"amount":0.82,"unit":"kg","available":true,"observedAt":"2026-11-11T10:22:35.907Z","url":"https://www.aldi.es/producto/pan-de-molde-blanco-249200.html"},
+    {"chain":"aldi","foodId":"yogurt","productId":"aldi-952000","name":"Yogur natural","price":1.29,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:26:29.055Z","url":"https://www.aldi.es/producto/yogur-natural-952000.html"},
+    {"chain":"aldi","foodId":"salt","productId":"aldi-250600","name":"Sal marina  fina yodada","price":0.38,"amount":1,"unit":"kg","available":true,"observedAt":"2026-11-11T10:26:36.634Z","url":"https://www.aldi.es/producto/sal-marina-fina-yodada-250600.html"}
+  ],
+  "rejected": [
+    {"chain":"aldi","foodId":"lentils","url":"https://www.aldi.es/producto/lentejas-cocidas-extra-503200.html","packaging":"400 g peso esc. unidad","reason":"drained-weight-only"},
+    {"chain":"aldi","foodId":"chickpeas","url":"https://www.aldi.es/producto/garbanzos-cocidos-extra-501000.html","packaging":"400 g peso esc. unidad","reason":"drained-weight-only"},
+    {"chain":"aldi","foodId":"tomato","url":"https://www.aldi.es/producto/tomate-triturado-extra-505200.html","packaging":"800 g peso esc. unidad","reason":"drained-weight-only"}
+  ],
+  "pending": [
+    {"chain":"aldi","foodIds":["eggs","sugar"],"url":"https://www.aldi.es/sitemaps/.aldi-nord-sitemap-products.xml","reason":"No validated exact product URL discovered"},
+    {"chain":"carrefour","url":"https://www.carrefour.es/supermercado/leche-semidesnatada-carrefour-brik-1-l/R-521007071/p","httpStatus":403,"reason":"Official detail request blocked; no access-control bypass attempted"},
+    {"chain":"lidl","url":"https://www.lidl.es/c/store/bajadas-permanentes/a10089468","reason":"Inspected page only published four approximate-weight meat offers; basic-food extraction remains unvalidated"}
+  ]
+}

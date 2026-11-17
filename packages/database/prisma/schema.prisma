@@ -65,6 +65,11 @@ model PriceHistory {
   price         Float
   pricePerUnit  Float
   recordedAt    DateTime @default(now())
+  sourceProvider String?
+  sourceUrl      String?
+  warehouse      String?
+  packageAmount  Float?
+  packageUnit    String?
 
   product     Product     @relation(fields: [productId], references: [id])
   supermarket Supermarket @relation(fields: [supermarketId], references: [id])
@@ -191,6 +196,7 @@ model ScrapingJob {
   completedAt   DateTime?
   productsFound Int       @default(0)
   errors        String    @default("") // Comma separated for SQLite compatibility
+  result        String    @default("{}")
   createdAt     DateTime  @default(now())
 
   @@index([supermarketId, status])

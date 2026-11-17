@@ -71,16 +71,84 @@ async function main() {
     'Neteja i Llar': 'ud',
     'Higiene': 'ud'
   };
+  const REAL_MERCADONA_IMAGES: Record<string, string> = {
+    "llet sencera": "https://prod-mercadona.imgix.net/images/c2919d36676cf45347b705030761e05d.jpg?fit=crop&h=300&w=300",
+    "llet semidesnatada": "https://prod-mercadona.imgix.net/images/50849479e00643799863773177894a86.jpg?fit=crop&h=300&w=300",
+    "oli d'oliva": "https://prod-mercadona.imgix.net/images/65c2349950feb1958362e06217003b10.jpg?fit=crop&h=300&w=300",
+    "oli d'oliva verge extra": "https://prod-mercadona.imgix.net/images/efb4b2c1a0e2cb8d9d522a815c295fa0.jpg?fit=crop&h=300&w=300",
+    "tomàquet fregit": "https://prod-mercadona.imgix.net/images/ca08b8d55e7b2261986a8b339346566e.jpg?fit=crop&h=300&w=300",
+    "arròs": "https://prod-mercadona.imgix.net/images/a037840134015df614457e55959954a6.jpg?fit=crop&h=300&w=300",
+    "macarrons": "https://prod-mercadona.imgix.net/images/87e795245842c0c16b14619736868848.jpg?fit=crop&h=300&w=300",
+    "espaguetis": "https://prod-mercadona.imgix.net/images/1381389814407887d1591f81014cc679.jpg?fit=crop&h=300&w=300",
+    "coca-cola": "https://prod-mercadona.imgix.net/images/4a9c69f201083161c8340df10bc75323.jpg?fit=crop&h=300&w=300",
+    "aigua": "https://prod-mercadona.imgix.net/images/b078972579b1297ce71b8782cc12140e.jpg?fit=crop&h=300&w=300",
+    "pollastre": "https://prod-mercadona.imgix.net/images/52077ef293144883bb37025875743b17.jpg?fit=crop&h=300&w=300",
+    "formatge": "https://prod-mercadona.imgix.net/images/88d8b584764836691498b81313437c78.jpg?fit=crop&h=300&w=300",
+    "ous": "https://prod-mercadona.imgix.net/images/ab5d32694b8c950157948218731057c3.jpg?fit=crop&h=300&w=300",
+    "poma": "https://prod-mercadona.imgix.net/images/6df00d33b69205562095861614757366.jpg?fit=crop&h=300&w=300",
+    "plàtan": "https://prod-mercadona.imgix.net/images/07d37750835848902517044037599723.jpg?fit=crop&h=300&w=300",
+    "xampú": "https://prod-mercadona.imgix.net/images/b9829f07cc1393663a87693630f52627.jpg?fit=crop&h=300&w=300",
+    "gel de dutxa": "https://prod-mercadona.imgix.net/images/d6872951f0458b98126742918e74567c.jpg?fit=crop&h=300&w=300",
+    "paper higiènic": "https://prod-mercadona.imgix.net/images/735c05d7621c8334466986283738b555.jpg?fit=crop&h=300&w=300"
+  };
 
-  const IMAGE_KEYWORDS: Record<string, string> = {
-    'Fruita i Verdura': 'fruit,vegetable',
-    'Carn i Peix': 'meat,fish',
-    'Lactis i Ous': 'dairy,milk,eggs',
-    'Pa i Pastisseria': 'bread,bakery',
-    'Begudes': 'drink,beverage,bottle',
-    'Rebost': 'food,pantry,pasta,rice',
-    'Neteja i Llar': 'cleaning,detergent',
-    'Higiene': 'hygiene,soap,shampoo'
+  const REAL_IMAGES: Record<string, string> = {
+    // Fruit & Veg
+    'Poma': 'https://images.openfoodfacts.org/images/products/506/048/284/0179/front_en.25.400.jpg',
+    'Plàtan': 'https://images.openfoodfacts.org/images/products/611/124/210/2941/front_en.47.400.jpg',
+    'Tomàquet': 'https://images.openfoodfacts.org/images/products/611/118/400/4730/front_en.51.400.jpg',
+    'Patata': 'https://images.openfoodfacts.org/images/products/327/655/485/3506/front_fr.4.400.jpg', // Generic potato like
+    'Ceba': 'https://images.openfoodfacts.org/images/products/327/655/901/5686/front_fr.4.400.jpg', // Onion
+    
+    // Dairy
+    'Llet': 'https://images.openfoodfacts.org/images/products/611/124/210/0992/front_fr.172.400.jpg',
+    'Formatge': 'https://images.openfoodfacts.org/images/products/611/124/672/1261/front_fr.94.400.jpg',
+    'Ous': 'https://images.openfoodfacts.org/images/products/500/015/707/6410/front_en.46.400.jpg',
+    'Iogurt': 'https://images.openfoodfacts.org/images/products/303/349/000/4743/front_fr.65.400.jpg', // Danone like
+
+
+    // Meat/Fish
+    'Pollastre': 'https://images.openfoodfacts.org/images/products/501/366/511/2235/front_en.38.400.jpg',
+    'Hamburguesa': 'https://images.openfoodfacts.org/images/products/326/385/988/3715/front_fr.4.400.jpg',
+    
+    // Pantry
+    'Arròs': 'https://images.openfoodfacts.org/images/products/501/366/510/0065/front_en.58.400.jpg',
+    'Pasta': 'https://images.openfoodfacts.org/images/products/807/680/019/5057/front_en.3704.400.jpg',
+    'Oli': 'https://images.openfoodfacts.org/images/products/871/920/023/7902/front_en.29.400.jpg',
+    'Pa': 'https://images.openfoodfacts.org/images/products/502/512/500/0006/front_en.106.400.jpg',
+
+    // Drinks
+    'Coca-Cola': 'https://images.openfoodfacts.org/images/products/544/900/021/4799/front_en.326.400.jpg',
+    'Cervesa': 'https://images.openfoodfacts.org/images/products/506/010/845/0386/front_fr.43.400.jpg',
+    'Aigua': 'https://images.openfoodfacts.org/images/products/611/103/500/0430/front_en.104.400.jpg',
+
+    // Home
+    'Paper Higiènic': 'https://images.openfoodfacts.org/images/products/356/007/109/5000/front_fr.18.400.jpg',
+    'Detergent': 'https://images.openfoodfacts.org/images/products/356/470/044/4337/front_fr.4.400.jpg',
+    'Xampú': 'https://images.openfoodfacts.org/images/products/871/895/162/4795/front_fr.7.400.jpg'
+  };
+
+  const getRandomImage = (baseName: string, category: string): string => {
+    // 0. Prefer Mercadona Real Images (High Quality)
+    const normalized = baseName.toLowerCase();
+    const mercadonaKey = Object.keys(REAL_MERCADONA_IMAGES).find(k => normalized.includes(k));
+    if (mercadonaKey) return REAL_MERCADONA_IMAGES[mercadonaKey];
+
+    // 1. Direct match OpenFoodFacts
+    if (REAL_IMAGES[baseName]) return REAL_IMAGES[baseName];
+    
+    // 2. Partial match OpenFoodFacts
+    const key = Object.keys(REAL_IMAGES).find(k => baseName.includes(k));
+    if (key) return REAL_IMAGES[key];
+
+    // 3. Category Fallback
+    if (category === 'Fruita i Verdura') return REAL_MERCADONA_IMAGES['poma'];
+    if (category === 'Carn i Peix') return REAL_MERCADONA_IMAGES['pollastre'];
+    if (category === 'Lactis i Ous') return REAL_MERCADONA_IMAGES['llet sencera'];
+    if (category === 'Begudes') return REAL_MERCADONA_IMAGES['aigua'];
+    if (category === 'Neteja i Llar') return REAL_MERCADONA_IMAGES['paper higiènic'];
+    
+    return 'https://images.openfoodfacts.org/images/products/506/048/284/0179/front_en.25.400.jpg'; // Default safe image
   };
 
   const SIZES: Record<string, number[]> = {
@@ -143,11 +211,8 @@ async function main() {
       // Normalized name important per al matching
       const normalizedName = `${p.baseName} ${p.brand} ${size}${unit}`.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
 
-      // Imatge: Utilitzem Lorem Flickr per tenir imatges reals de menjar segons categoria
-      const keywords = IMAGE_KEYWORDS[p.category] || 'grocery';
-      // Afegim un timestamp o random per evitar caching agressiu del mateix URL en navegadors
-      const randomLock = Math.floor(Math.random() * 10000);
-      const imageUrl = `https://loremflickr.com/300/300/${keywords}?lock=${randomLock}`;
+      // Imatge: Utilitzem imatges reals d'OpenFoodFacts
+      const imageUrl = getRandomImage(p.baseName, p.category);
 
       const product = await prisma.product.upsert({
           where: { barcode: normalizedName },
