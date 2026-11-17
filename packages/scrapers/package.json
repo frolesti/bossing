@@ -11,6 +11,8 @@
     "scrape:mercadona": "tsx src/cli.ts --source mercadona",
     "scrape:lidl": "tsx src/cli.ts --source lidl",
     "scrape:carrefour": "tsx src/cli.ts --source carrefour",
+    "test:mercadona-api": "tsx src/manual-tests/mercadona-api.ts",
+    "test:access": "tsx src/manual-tests/supermarket-access.ts",
     "test": "vitest",
     "clean": "rm -rf dist node_modules"
   },
