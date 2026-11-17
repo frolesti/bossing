@@ -1,204 +1,82 @@
-import axios from 'axios';
-import { BaseScraper, type ScraperConfig } from '../base.js';
+import puppeteer from 'puppeteer';
+import { BaseScraper } from '../base.js';
 import type { Product, ScrapedPrice } from '@bossing/shared';
 
-const config: ScraperConfig = {
-  name: 'Carrefour',
-  baseUrl: 'https://www.carrefour.es',
-  rateLimit: 1, // Més conservador per evitar bloqueig
-  enabled: true,
-};
+const config = { name: 'Carrefour', baseUrl: 'https://www.carrefour.es', rateLimit: 1, enabled: true };
 
-// Endpoint API descobert a GitHub
-const CARREFOUR_API_BASE = 'https://www.carrefour.es/cloud-api';
-
-interface CarrefourCategory {
-  id: string;
-  name: string;
-  seoUrl: string;
-  level: number;
-  subcategories?: CarrefourCategory[];
+function productUrl(value: string): URL {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.origin !== config.baseUrl || url.username || url.password || url.search || url.hash ||
+    !/^\/supermercado\/[^/]+\/R-(?:VC4AECOMM-)?\d+\/p$/.test(url.pathname)) throw new Error('Unconfirmed Carrefour product URL');
+  return url;
 }
 
-interface CarrefourProduct {
-  display_name: string;
-  product_id: string;
-  active_price: {
-    price: number;
-    unit_price: number;
-    unit_measure: string;
-    original_price?: number;
-  };
-  image_path: string;
-  category_path?: string;
-  ean?: string;
-  brand?: string;
-  in_stock: boolean;
+export function normalizeCarrefourProduct(value: unknown, sourceUrl: string, minimumPurchaseQuantity: number, scrapedAt = new Date()): ScrapedPrice {
+  const product = value as { '@type'?: string; sku?: string; name?: string; offers?: { '@type'?: string; url?: string;
+    price?: number | string; priceCurrency?: string; availability?: string } } | null;
+  const source = productUrl(sourceUrl);
+  if (!product || product['@type'] !== 'Product' || typeof product.sku !== 'string' || !/^\d+$/.test(product.sku) ||
+    typeof product.name !== 'string' || !product.name.trim()) throw new Error('Unconfirmed Carrefour product identity');
+  const offer = product.offers;
+  if (!offer || offer['@type'] !== 'Offer' || offer.url !== source.href || offer.priceCurrency !== 'EUR' ||
+    !['number', 'string'].includes(typeof offer.price) || !/^\d+(?:\.\d{1,2})?$/.test(String(offer.price)) ||
+    !Number.isFinite(Number(offer.price)) || Number(offer.price) <= 0) throw new Error('Invalid Carrefour euro offer');
+  if (!/^https:\/\/schema\.org\/(InStock|OutOfStock)$/.test(offer.availability || '')) throw new Error('Unconfirmed Carrefour availability');
+  if (!Number.isSafeInteger(minimumPurchaseQuantity) || minimumPurchaseQuantity < 1 || minimumPurchaseQuantity > 100) {
+    throw new Error('Unconfirmed Carrefour minimum purchase');
+  }
+  const size = product.name.toLowerCase().trim().match(/(?:\b(\d+)\s*x\s*)?(\d+(?:[.,]\d+)?)\s*(kg|g|ml|cl|l|uds?|unidad(?:es)?)\.?$/);
+  if (!size || /aprox|granel|peso\s+variable/i.test(product.name)) throw new Error('Unconfirmed Carrefour fixed packaging');
+  const sourceUnit = size[3];
+  const unit = /^(kg|g)$/.test(sourceUnit) ? 'kg' : /^(ml|cl|l)$/.test(sourceUnit) ? 'l' : 'ud';
+  const amount = minimumPurchaseQuantity * Number(size[1] || 1) * Number(size[2].replace(',', '.')) *
+    (sourceUnit === 'g' || sourceUnit === 'ml' ? 0.001 : sourceUnit === 'cl' ? 0.01 : 1);
+  if (!Number.isFinite(amount) || amount <= 0 || (unit === 'ud' && !Number.isInteger(amount))) throw new Error('Invalid Carrefour package amount');
+  const price = Math.round(Number(offer.price) * minimumPurchaseQuantity * 100) / 100;
+  return { productId: `carrefour-${source.pathname.match(/\/R-((?:VC4AECOMM-)?\d+)\/p$/)![1]}`,
+    name: minimumPurchaseQuantity === 1 ? product.name.trim() : `Pack obligatori de ${minimumPurchaseQuantity} x ${product.name.trim()}`,
+    supermarket: 'Carrefour', supermarketId: 'carrefour', category: 'Alimentacio', price, pricePerUnit: price / amount,
+    unit, packageSize: { amount, unit }, available: offer.availability?.endsWith('/InStock') === true, scrapedAt,
+    source: { provider: 'carrefour-storefront', warehouse: 'public-catalog', url: source.href } };
 }
 
-interface CarrefourProductsResponse {
-  products: CarrefourProduct[];
-  total: number;
-  offset: number;
-}
-
-/**
- * Scraper per a Carrefour
- * 
- * Carrefour té una API protegida que requereix cookies de sessió.
- * Utilitzem headers similars a un navegador per evitar bloqueig.
- */
 export class CarrefourScraper extends BaseScraper {
-  private lastRequestTime = 0;
-  
-  // Headers per simular navegador
-  private readonly browserHeaders = {
-    'Accept': 'application/json',
-    'Accept-Language': 'es-ES,es;q=0.9,ca;q=0.8',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://www.carrefour.es/',
-    'Origin': 'https://www.carrefour.es',
-  };
+  private nextRequestAt = 0;
+  constructor() { super(config); }
 
-  constructor() {
-    super(config);
-  }
-
-  private async waitForRateLimit(): Promise<void> {
-    const minInterval = 1000 / this.config.rateLimit;
-    const elapsed = Date.now() - this.lastRequestTime;
-    if (elapsed < minInterval) {
-      await new Promise(resolve => setTimeout(resolve, minInterval - elapsed));
-    }
-    this.lastRequestTime = Date.now();
-  }
-
-  /**
-   * Obtenir categories principals
-   */
-  async getCategories(): Promise<CarrefourCategory[]> {
+  async getProductPrice(productId: string, sourceUrl: string): Promise<ScrapedPrice> {
+    const url = productUrl(sourceUrl);
+    if (productId !== `carrefour-${url.pathname.match(/\/R-((?:VC4AECOMM-)?\d+)\/p$/)![1]}`) throw new Error('Carrefour requested identity differs');
+    const now = Date.now();
+    const scheduledAt = Math.max(now, this.nextRequestAt);
+    this.nextRequestAt = scheduledAt + 1000;
+    if (scheduledAt > now) await new Promise(resolve => setTimeout(resolve, scheduledAt - now));
+    const browser = await puppeteer.launch({ headless: 'new' });
     try {
-      const response = await axios.get(
-        `${CARREFOUR_API_BASE}/categories-api/v1/categories/menu/`,
-        { headers: this.browserHeaders }
-      );
-      return response.data?.categories || [];
-    } catch (error) {
-      console.error('[Carrefour] Error obtenint categories:', error);
-      return [];
-    }
+      const page = await browser.newPage();
+      const response = await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      if (!response || response.status() >= 400) throw Object.assign(new Error(`Carrefour HTTP ${response?.status() || 'unavailable'}`), {
+        response: { status: response?.status(), headers: { 'retry-after': response?.headers()['retry-after'] } },
+      });
+      const data = await page.evaluate(() => {
+        const products = [...document.querySelectorAll('script[type="application/ld+json"]')]
+          .map(element => JSON.parse(element.textContent || 'null')).filter(value => value?.['@type'] === 'Product');
+        if (products.length !== 1) throw new Error('Missing or ambiguous Carrefour product data');
+        const badge = document.querySelector('.buybox__pack-badge');
+        const text = document.querySelector('.buybox__pack-info-description')?.textContent?.trim();
+        const quantities = text?.match(/de\s+(\d+)\s+en\s+(\d+)\s+unidades/i);
+        if ((badge || text) && (!quantities || quantities[1] !== quantities[2])) throw new Error('Unconfirmed Carrefour mandatory pack');
+        return { product: products[0], minimumPurchaseQuantity: quantities ? Number(quantities[1]) : 1,
+          canonicalUrl: document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href };
+      });
+      if (page.url() !== url.href || data.canonicalUrl !== url.href) throw new Error('Carrefour canonical identity differs');
+      return normalizeCarrefourProduct(data.product, url.href, data.minimumPurchaseQuantity);
+    } finally { await browser.close(); }
   }
 
-  /**
-   * Obtenir productes d'una categoria
-   * Nota: Pot requerir cookies de sessió per funcionar
-   */
-  async getCategoryProducts(categoryPath: string, offset: number = 0): Promise<CarrefourProduct[]> {
-    try {
-      await this.waitForRateLimit();
-      
-      const response = await axios.get<CarrefourProductsResponse>(
-        `${CARREFOUR_API_BASE}/plp-food-papi/v1${categoryPath}`,
-        {
-          params: { offset, limit: 24 },
-          headers: this.browserHeaders,
-        }
-      );
-      
-      return response.data?.products || [];
-    } catch (error: any) {
-      // 403 significa que necessitem cookies/autenticació
-      if (error.response?.status === 403) {
-        console.warn('[Carrefour] API protegida - necessita autenticació');
-      } else {
-        console.error(`[Carrefour] Error obtenint productes de ${categoryPath}:`, error.message);
-      }
-      return [];
-    }
-  }
-
-  private mapProduct(product: CarrefourProduct): ScrapedPrice {
-    return {
-      productId: `carf-${product.product_id}`,
-      name: product.display_name,
-      supermarket: 'Carrefour',
-      supermarketId: 'carrefour',
-      price: product.active_price.price,
-      originalPrice: product.active_price.original_price,
-      unit: product.active_price.unit_measure || 'ud',
-      pricePerUnit: product.active_price.unit_price,
-      category: product.category_path || 'General',
-      imageUrl: product.image_path,
-      available: product.in_stock,
-      scrapedAt: new Date(),
-    };
-  }
-
-  async scrapeProducts(_category?: string): Promise<ScrapedPrice[]> {
-    const products: ScrapedPrice[] = [];
-
-    try {
-      console.log('[Carrefour] Intentant obtenir productes via API...');
-      
-      // Intentar obtenir categories
-      const categories = await this.getCategories();
-      
-      if (categories.length === 0) {
-        console.warn('[Carrefour] No s\'han pogut obtenir categories - API pot estar protegida');
-        return [];
-      }
-
-      console.log(`[Carrefour] Trobades ${categories.length} categories`);
-
-      // Processar primeres categories (limitat per evitar bloqueig)
-      for (const category of categories.slice(0, 5)) {
-        if (category.seoUrl) {
-          const categoryProducts = await this.getCategoryProducts(category.seoUrl);
-          products.push(...categoryProducts.map(p => this.mapProduct(p)));
-          console.log(`[Carrefour] ${category.name}: ${categoryProducts.length} productes`);
-        }
-      }
-
-    } catch (error) {
-      console.error('[Carrefour] Error scraping:', error);
-    }
-
-    console.log(`[Carrefour] Total productes: ${products.length}`);
-    return products;
-  }
-
-  async scrapeProductDetails(productId: string): Promise<Product | null> {
-    console.log(`[Carrefour] Getting details for ${productId}...`);
-    // Implementació futura
-    return null;
-  }
-
-  async searchProducts(query: string): Promise<ScrapedPrice[]> {
-    console.log(`[Carrefour] Cercant: ${query}...`);
-    
-    try {
-      await this.waitForRateLimit();
-      
-      // Endpoint de cerca
-      const response = await axios.get(
-        `${CARREFOUR_API_BASE}/search-api/v1/search`,
-        {
-          params: { query, limit: 50 },
-          headers: this.browserHeaders,
-        }
-      );
-
-      const products = response.data?.products || [];
-      return products.map((p: CarrefourProduct) => this.mapProduct(p));
-    } catch (error: any) {
-      if (error.response?.status === 403) {
-        console.warn('[Carrefour] Cerca protegida - necessita autenticació');
-      } else {
-        console.error('[Carrefour] Error cercant:', error.message);
-      }
-      return [];
-    }
-  }
+  async searchProducts(_query: string): Promise<ScrapedPrice[]> { throw new Error('Carrefour search capture is not validated; use exact product URLs'); }
+  async scrapeProducts(_category?: string): Promise<ScrapedPrice[]> { throw new Error('Carrefour full-catalog capture is not supported'); }
+  async scrapeProductDetails(): Promise<Product | null> { return null; }
 }
 
 export const carrefourScraper = new CarrefourScraper();

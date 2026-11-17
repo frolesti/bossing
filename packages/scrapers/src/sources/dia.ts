@@ -5,129 +5,97 @@ import type { Product, ScrapedPrice } from '@bossing/shared';
 const config: ScraperConfig = {
   name: 'DIA',
   baseUrl: 'https://www.dia.es',
-  rateLimit: 5,
+  rateLimit: 1,
   enabled: true,
 };
 
+export function normalizeDIAProduct(value: unknown, sourceUrl: string, scrapedAt = new Date()): ScrapedPrice {
+  const product = value as { '@type'?: string; name?: string; sku?: string; image?: string;
+    offers?: { '@type'?: string; url?: string; price?: number | string; priceCurrency?: string; availability?: string } } | null;
+  const source = new URL(sourceUrl);
+  const identifier = source.pathname.match(/\/p\/(\d+(?:P\d+)?)$/)?.[1];
+  if (!product || product['@type'] !== 'Product' || typeof product.name !== 'string' || !product.name.trim() ||
+    source.protocol !== 'https:' || source.hostname !== 'www.dia.es' || source.port || source.username || source.password ||
+    source.search || source.hash || !identifier || (product.sku !== undefined && product.sku !== identifier)) {
+    throw new Error('Unconfirmed DIA product identity');
+  }
+  const offer = product.offers;
+  if (!offer || offer['@type'] !== 'Offer' || offer.url !== source.href || offer.priceCurrency !== 'EUR' ||
+    (typeof offer.price !== 'number' && typeof offer.price !== 'string') || !/^\d+(?:\.\d{1,2})?$/.test(String(offer.price)) ||
+    !Number.isFinite(Number(offer.price)) || Number(offer.price) <= 0) throw new Error('Invalid DIA official offer');
+  if (typeof offer.availability !== 'string' || !/^https:\/\/schema\.org\/(InStock|OutOfStock)$/.test(offer.availability)) {
+    throw new Error('Unconfirmed DIA availability');
+  }
+  const packaging = product.name.toLowerCase().trim().match(/(?:\b(\d+)\s*x\s*)?(\d+(?:[.,]\d+)?)\s*(kg|g|ml|cl|l|uds?|unidades?|docenas?)\.?$/);
+  if (!packaging || /aprox|peso\s+variable|a\s+granel/i.test(product.name)) throw new Error('Unconfirmed DIA packaging');
+  const sourceUnit = packaging[3];
+  const unit = /^(kg|g)$/.test(sourceUnit) ? 'kg' : /^(ml|cl|l)$/.test(sourceUnit) ? 'l' : 'ud';
+  const scale = sourceUnit === 'g' || sourceUnit === 'ml' ? 0.001 : sourceUnit === 'cl' ? 0.01 : sourceUnit.startsWith('docena') ? 12 : 1;
+  const amount = Number(packaging[1] || 1) * Number(packaging[2].replace(',', '.')) * scale;
+  if (!Number.isFinite(amount) || amount <= 0 || (unit === 'ud' && !Number.isInteger(amount))) throw new Error('Invalid DIA package amount');
+  const price = Number(offer.price);
+  return { productId: `dia-${identifier}`, name: product.name.trim(), supermarket: 'DIA', supermarketId: 'dia',
+    price, pricePerUnit: price / amount, unit, category: 'Alimentació', imageUrl: typeof product.image === 'string' ? product.image : undefined,
+    available: offer.availability.endsWith('/InStock'), scrapedAt, packageSize: { amount, unit },
+    source: { provider: 'dia-storefront', warehouse: 'public-catalog', url: source.href } };
+}
+
 export class DIAScraper extends BaseScraper {
+  private nextRequestAt = 0;
+
   constructor() {
     super(config);
   }
 
-  private async parsePrice(priceStr: string | null | undefined): Promise<number> {
-    if (!priceStr) return 0;
-    // "1.234,56 €" -> 1.23456 -> 1234.56.
-    // Standard format is 1,23 € or 1.234,56 €
-    // Remove symbols and trim
-    const clean = priceStr.replace(/[^\d,\.]/g, '').trim();
-    // Replace comma with dot if it's the decimal separator
-    // If we have thousands like 1.000,00 -> we need to handle it.
-    // Simple heuristic for Spain price format: comma is decimal.
-    const normalized = clean.replace(/\./g, '').replace(',', '.');
-    return parseFloat(normalized) || 0;
+  private async readPage<T>(url: string, extract: (page: import('puppeteer').Page) => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const scheduledAt = Math.max(now, this.nextRequestAt);
+    this.nextRequestAt = scheduledAt + 1000 / this.config.rateLimit;
+    if (scheduledAt > now) await new Promise(resolve => setTimeout(resolve, scheduledAt - now));
+    const browser = await puppeteer.launch({ headless: 'new' });
+    try {
+      const page = await browser.newPage();
+      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      if (!response || response.status() >= 400) throw Object.assign(new Error(`DIA HTTP ${response?.status() || 'unavailable'}`), {
+        response: { status: response?.status(), headers: { 'retry-after': response?.headers()['retry-after'] } },
+      });
+      if (new URL(page.url()).origin !== config.baseUrl) throw new Error('DIA redirected away from its storefront');
+      return await extract(page);
+    } finally { await browser.close(); }
+  }
+
+  async getProductPrice(productId: string, sourceUrl: string): Promise<ScrapedPrice> {
+    const url = new URL(sourceUrl);
+    if (!/^dia-\d+(?:P\d+)?$/.test(productId) || url.protocol !== 'https:' || url.origin !== config.baseUrl ||
+      url.username || url.password || url.search || url.hash || !url.pathname.endsWith(`/p/${productId.slice(4)}`)) {
+      throw new Error('Unconfirmed DIA product identity');
+    }
+    const documents = await this.readPage(url.href, page => page.$$eval('script[type="application/ld+json"]', elements =>
+      elements.map(element => JSON.parse(element.textContent || 'null'))));
+    const products = documents.filter(value => value?.['@type'] === 'Product');
+    if (products.length !== 1) throw new Error('Missing or ambiguous DIA product data');
+    return normalizeDIAProduct(products[0], url.href);
   }
 
   async searchProducts(query: string): Promise<ScrapedPrice[]> {
-    console.log(`[DIA] Searching for: ${query} using Puppeteer...`);
-    let browser;
-    try {
-      // Launch Puppeteer.
-      // NOTE: In production/docker this might need args like --no-sandbox
-      browser = await puppeteer.launch({
-        headless: "new",
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
-
-      const page = await browser.newPage();
-      await page.setViewport({ width: 1920, height: 1080 });
-      // Use a common user agent
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-      const url = `${config.baseUrl}/search?q=${encodeURIComponent(query)}`;
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
-
-      // Wait for product cards valid selector
-      try {
-         await page.waitForSelector('div[data-test-id="product-card"]', { timeout: 15000 });
-      } catch (e) {
-         console.warn(`[DIA] Timeout waiting for products for query "${query}"`);
-         return [];
-      }
-
-      // Extract data
-      const productsData = await page.evaluate(() => {
-        const items: any[] = [];
-        const cards = document.querySelectorAll('div[data-test-id="product-card"]');
-        
-        cards.forEach(card => {
-            // Selectors based on inspection
-            const nameEl = card.querySelector('[data-test-id="search-product-card-name"], .search-product-card__product-name');
-            const priceEl = card.querySelector('[data-test-id="search-product-card-unit-price"], .search-product-card__active-price');
-            const unitPriceEl = card.querySelector('[data-test-id="search-product-card-kilo-price"], .search-product-card__price-per-unit');
-            const imgEl = card.querySelector('img[data-test-id="search-product-card-image"], .search-product-card__product-image');
-            const linkEl = card.querySelector('a[data-test-id="search-product-card-name"], a.search-product-card__product-link');
-            
-            if (nameEl && priceEl) {
-                items.push({
-                    name: nameEl.textContent?.trim(),
-                    priceText: priceEl.textContent?.trim(),
-                    unitPriceText: unitPriceEl?.textContent?.trim(),
-                    imageUrl: imgEl?.getAttribute('src'),
-                    link: linkEl?.getAttribute('href'),
-                    id: card.getAttribute('object_id') || linkEl?.getAttribute('href')?.split('/').pop()
-                });
-            }
-        });
-        return items;
-      });
-
-      const results: ScrapedPrice[] = [];
-      for (const p of productsData) {
-        const price = await this.parsePrice(p.priceText);
-        // Unit price usually format "(3,33 €/KILO)" or "(0,33 €/U)"
-        const pricePerUnit = await this.parsePrice(p.unitPriceText);
-        
-        // Extract unit string e.g. "KILO", "LITRO", "U"
-        let unit = 'ud';
-        if (p.unitPriceText && p.unitPriceText.includes('/')) {
-            const parts = p.unitPriceText.split('/');
-            if (parts.length > 1) {
-                unit = parts[1].replace(')', '').trim().toLowerCase();
-            }
-        }
-
-        results.push({
-          productId: `dia-${p.id}`,
-          name: p.name,
-          supermarket: 'DIA',
-          supermarketId: 'dia',
-          price: price,
-          originalPrice: price,
-          unit: unit,
-          pricePerUnit: pricePerUnit,
-          category: 'Search',
-          imageUrl: p.imageUrl ? (p.imageUrl.startsWith('http') ? p.imageUrl : `${config.baseUrl}${p.imageUrl}`) : '',
-          available: true,
-          scrapedAt: new Date(),
-        });
-      }
-
-      console.log(`[DIA] Found ${results.length} products`);
-      return results;
-
-    } catch (error) {
-      console.error('[DIA] Error details:', error);
-      return [];
-    } finally {
-      if (browser) await browser.close();
+    const url = `${config.baseUrl}/search?${new URLSearchParams({ q: query })}`;
+    const links = await this.readPage(url, page => page.$$eval('a[href*="/p/"]', elements =>
+      [...new Set(elements.map(element => element.getAttribute('href')).filter((value): value is string => !!value))].slice(0, 12)));
+    if (!links.length) throw new Error('No verifiable DIA search results');
+    const quotes: ScrapedPrice[] = [];
+    for (const link of links) {
+      const productUrl = new URL(link, config.baseUrl);
+      const identifier = productUrl.pathname.match(/\/p\/(\d+(?:P\d+)?)$/)?.[1];
+      if (!identifier) throw new Error('Unconfirmed DIA search identity');
+      quotes.push(await this.getProductPrice(`dia-${identifier}`, productUrl.href));
     }
+    return quotes;
   }
 
-  // Not implemented fully yet
   async getCategories() { return []; }
   async getCategoryProducts() { return []; }
-  async scrapeProducts(category?: string) { return []; }
-  async scrapeProductDetails(productId: string) { return null; }
+  async scrapeProducts(): Promise<ScrapedPrice[]> { throw new Error('DIA full-catalog capture is not supported'); }
+  async scrapeProductDetails(): Promise<Product | null> { return null; }
 }
 
 export const diaScraper = new DIAScraper();

@@ -22,6 +22,8 @@ interface ConsumProduct {
     url: string;
     imageURL: string;
     description: string;
+    availability: string;
+    temporaryOutOfStock: boolean;
   };
   priceData: {
     prices: Array<{
@@ -62,6 +64,14 @@ export class ConsumScraper extends BaseScraper {
     super(config);
   }
 
+  private async request<T>(path = '', params?: Record<string, string | number>): Promise<T> {
+    await this.waitForRateLimit();
+    const response = await axios.get<T>(`${this.apiUrl}/catalog/product${path}`, {
+      params, timeout: 15_000, headers: { Accept: 'application/json' },
+    });
+    return response.data;
+  }
+
   /**
    * Wait for rate limit
    */
@@ -78,47 +88,18 @@ export class ConsumScraper extends BaseScraper {
    * Obté productes amb paginació
    */
   private async getProducts(offset: number = 0, limit: number = 100): Promise<ConsumProduct[]> {
-    try {
-      const response = await axios.get<ConsumProductsResponse>(
-        `${this.apiUrl}/catalog/product`,
-        {
-          params: {
-            offset,
-            limit,
-          },
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        }
-      );
-      return response.data.products;
-    } catch (error) {
-      console.error('[Consum] Error obtenint productes:', error);
-      return [];
-    }
+    const data = await this.request<ConsumProductsResponse>('', { offset, limit });
+    if (!Array.isArray(data.products)) throw new Error('Invalid Consum product response');
+    return data.products;
   }
 
   /**
    * Obté el nombre total de productes
    */
   private async getTotalCount(): Promise<number> {
-    try {
-      const response = await axios.get<ConsumProductsResponse>(
-        `${this.apiUrl}/catalog/product`,
-        {
-          params: { offset: 0, limit: 1 },
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        }
-      );
-      return response.data.totalCount;
-    } catch (error) {
-      console.error('[Consum] Error obtenint total:', error);
-      return 0;
-    }
+    const data = await this.request<ConsumProductsResponse>('', { offset: 0, limit: 1 });
+    if (!Number.isSafeInteger(data.totalCount) || data.totalCount <= 0) throw new Error('Invalid Consum catalog count');
+    return data.totalCount;
   }
 
   /**
@@ -138,19 +119,44 @@ export class ConsumScraper extends BaseScraper {
    * Converteix un producte de Consum al format ScrapedPrice
    */
   private normalizeProduct(product: ConsumProduct): ScrapedPrice {
-    // Obtenir el preu normal i el preu d'oferta si existeix
+    if (!Number.isSafeInteger(product?.id) || product.id <= 0 || !product.productData?.name?.trim()) {
+      throw new Error('Invalid Consum product identity');
+    }
+    if (!['0', '1'].includes(product.productData.availability) || typeof product.productData.temporaryOutOfStock !== 'boolean') {
+      throw new Error('Unconfirmed Consum availability');
+    }
     const normalPriceData = product.priceData.prices.find(p => p.id === 'PRICE');
-    const offerPriceData = product.priceData.prices.find(p => p.id === 'OFFER_PRICE');
-    
-    const price = offerPriceData?.value.centAmount ?? normalPriceData?.value.centAmount ?? 0;
-    const originalPrice = offerPriceData ? normalPriceData?.value.centAmount : undefined;
-    const pricePerUnit = offerPriceData?.value.centUnitAmount ?? normalPriceData?.value.centUnitAmount ?? price;
-
-    // Extreure la unitat del format "1 Kg", "1 L", etc.
-    const unitMatch = product.priceData.unitPriceUnitType?.match(/(\d+)\s*(\w+)/);
-    const unit = unitMatch ? unitMatch[2].toLowerCase() : 'unitat';
-
-    const category = product.categories[0]?.name || 'Sense categoria';
+    const price = normalPriceData?.value.centAmount;
+    const referencePrice = normalPriceData?.value.centUnitAmount;
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0 ||
+      Math.abs(Math.round(price * 100) / 100 - price) > 1e-8 ||
+      typeof referencePrice !== 'number' || !Number.isFinite(referencePrice) || referencePrice <= 0) {
+      throw new Error('Invalid Consum price');
+    }
+    const units: Record<string, { unit: string; scale: number }> = {
+      kg: { unit: 'kg', scale: 1 }, g: { unit: 'kg', scale: 0.001 }, gr: { unit: 'kg', scale: 0.001 },
+      l: { unit: 'l', scale: 1 }, ml: { unit: 'l', scale: 0.001 }, cl: { unit: 'l', scale: 0.01 },
+      ud: { unit: 'ud', scale: 1 }, uds: { unit: 'ud', scale: 1 }, u: { unit: 'ud', scale: 1 },
+      unidad: { unit: 'ud', scale: 1 }, unidades: { unit: 'ud', scale: 1 },
+      dc: { unit: 'ud', scale: 12 },
+    };
+    const description = product.productData.description?.trim().toLowerCase() || '';
+    const packaging = description.match(/(?:\b(\d+)\s*[x×]\s*)?(\d+(?:[.,]\d+)?)\s*(kg|gr|g|ml|cl|l|unidades|unidad|uds|ud|u|dc)\.?$/);
+    const reference = product.priceData.unitPriceUnitType?.trim().toLowerCase().match(/^(\d+(?:[.,]\d+)?)\s*(kg|gr|g|ml|cl|l|unidades|unidad|uds|ud|u|dc)$/);
+    if (!reference || !units[reference[2]]) throw new Error('Invalid Consum unit-price basis');
+    const referenceAmount = Number(reference[1].replace(',', '.')) * units[reference[2]].scale;
+    if (referenceAmount <= 0) throw new Error('Invalid Consum unit-price amount');
+    const unit = units[reference[2]].unit;
+    const pricePerUnit = referencePrice / referenceAmount;
+    let packageSize: ScrapedPrice['packageSize'];
+    if (packaging && !/aprox|peso variable|al peso/.test(description)) {
+      const packUnit = units[packaging[3]];
+      const amount = Number(packaging[1] || 1) * Number(packaging[2].replace(',', '.')) * packUnit.scale;
+      if (Number.isFinite(amount) && amount > 0 && (packUnit.unit !== 'ud' || Number.isInteger(amount)) &&
+        packUnit.unit === unit && Math.abs(price / amount - pricePerUnit) <= 0.011) {
+        packageSize = { amount, unit: packUnit.unit };
+      }
+    }
 
     return {
       productId: `consum-${product.id}`,
@@ -158,13 +164,14 @@ export class ConsumScraper extends BaseScraper {
       supermarket: 'Consum',
       supermarketId: 'consum',
       price,
-      originalPrice,
       unit,
       pricePerUnit,
-      category,
+      category: product.categories?.[0]?.name || 'Sense categoria',
       imageUrl: product.productData.imageURL,
-      available: true,
+      available: product.productData.availability === '1' && !product.productData.temporaryOutOfStock,
       scrapedAt: new Date(),
+      packageSize,
+      source: { provider: 'consum-rest', warehouse: 'public-catalog', url: `${this.apiUrl}/catalog/product/${product.id}` },
     };
   }
 
@@ -177,30 +184,23 @@ export class ConsumScraper extends BaseScraper {
     const products: ScrapedPrice[] = [];
     const batchSize = 100;
     let offset = 0;
-    const maxProducts = 500; // Limitem a 500 per ara per no saturar
 
     // Obtenir el total de productes
     const totalCount = await this.getTotalCount();
     console.log(`[Consum] Total productes disponibles: ${totalCount}`);
 
-    const targetCount = Math.min(maxProducts, totalCount);
+    const targetCount = totalCount;
 
     while (offset < targetCount) {
-      await this.waitForRateLimit();
-
       const limit = Math.min(batchSize, targetCount - offset);
       const batch = await this.getProducts(offset, limit);
 
       if (batch.length === 0) {
-        break;
+        throw new Error('Consum catalog ended before the declared count');
       }
 
       for (const product of batch) {
-        try {
-          products.push(this.normalizeProduct(product));
-        } catch (error) {
-          console.error(`[Consum] Error normalitzant producte ${product.id}:`, error);
-        }
+        products.push(this.normalizeProduct(product));
       }
 
       offset += batch.length;
@@ -215,24 +215,9 @@ export class ConsumScraper extends BaseScraper {
    * Obté detalls d'un producte específic
    */
   async scrapeProductDetails(productId: string): Promise<Product | null> {
-    const id = productId.replace('consum-', '');
-    
-    try {
-      const response = await axios.get<ConsumProduct>(
-        `${this.apiUrl}/catalog/product/${id}`,
-        {
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        }
-      );
-
-      const product = response.data;
-      const unitMatch = product.priceData.unitPriceUnitType?.match(/(\d+)\s*(\w+)/);
-      const unit = unitMatch ? unitMatch[2].toLowerCase() : 'unitat';
-
-      return {
+    const product = await this.getProduct(productId);
+    const quote = this.normalizeProduct(product);
+    return {
         id: `consum-${product.id}`,
         name: product.productData.name,
         normalizedName: this.normalizeProductName(product.productData.name),
@@ -241,14 +226,21 @@ export class ConsumScraper extends BaseScraper {
         description: product.productData.description,
         imageUrl: product.productData.imageURL,
         barcode: product.ean || undefined,
-        unit,
+        unit: quote.unit,
         createdAt: new Date(),
         updatedAt: new Date(),
-      };
-    } catch (error) {
-      console.error(`[Consum] Error obtenint producte ${productId}:`, error);
-      return null;
-    }
+    };
+  }
+
+  private async getProduct(productId: string): Promise<ConsumProduct> {
+    if (!/^consum-\d+$/.test(productId)) throw new Error('Invalid Consum product identifier');
+    const product = await this.request<ConsumProduct>(`/${productId.slice(7)}`);
+    if (`consum-${product.id}` !== productId) throw new Error('Consum returned a different product');
+    return product;
+  }
+
+  async getProductPrice(productId: string): Promise<ScrapedPrice> {
+    return this.normalizeProduct(await this.getProduct(productId));
   }
 
   /**
@@ -258,24 +250,12 @@ export class ConsumScraper extends BaseScraper {
     console.log(`[Consum] Cercant: ${query}...`);
     
     try {
-      const response = await axios.get<ConsumProductsResponse>(
-        `${this.apiUrl}/catalog/product`,
-        {
-          params: {
-            q: query,
-            limit: 50,
-          },
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        }
-      );
-
-      return response.data.products.map(p => this.normalizeProduct(p));
+      const data = await this.request<ConsumProductsResponse>('', { q: query, limit: 200 });
+      if (!Array.isArray(data.products)) throw new Error('Invalid Consum search response');
+      return data.products.map(product => this.normalizeProduct(product));
     } catch (error) {
       console.error('[Consum] Error cercant productes:', error);
-      return [];
+      throw error;
     }
   }
 }

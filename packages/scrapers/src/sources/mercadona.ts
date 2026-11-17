@@ -1,563 +1,273 @@
-import axios from 'axios';
+import axios, { type AxiosInstance } from 'axios';
 import { BaseScraper, type ScraperConfig } from '../base.js';
 import type { Product, ScrapedPrice } from '@bossing/shared';
 
 const config: ScraperConfig = {
   name: 'Mercadona',
   baseUrl: 'https://tienda.mercadona.es',
-  rateLimit: 2, // 2 requests per second
+  rateLimit: 3,
   enabled: true,
 };
 
-// Credencials públiques d'Algolia per a cerca
-const ALGOLIA_APP_ID = '7UZJKL1DJ0';
-const ALGOLIA_API_KEY = '9d8f2e39e90df472b4f2e559a116fe17';
-const DEFAULT_WAREHOUSE = 'vlc1'; // València per defecte
-
-interface AlgoliaProduct {
-  objectID: string;
+interface MercaProduct {
   id: string;
-  slug: string;
-  brand: string | null;
   display_name: string;
   thumbnail: string;
-  price_instructions: {
-    unit_price: string;
-    reference_price: string;
-    reference_format: string;
-    unit_size: number;
-    size_format: string;
-    is_new: boolean;
-    price_decreased: boolean;
-    previous_unit_price?: string | null;
-  };
-  categories: Array<{ id: number; name: string; categories?: Array<{ name: string }> }>;
-  _highlightResult?: Record<string, unknown>;
-}
-
-interface AlgoliaResponse {
-  hits: AlgoliaProduct[];
-  nbHits: number;
-  page: number;
-  nbPages: number;
-  hitsPerPage: number;
-}
-
-interface MercadonaCategory {
-  id: number;
-  name: string;
-  categories?: MercadonaSubcategory[];
-}
-
-interface MercadonaSubcategory {
-  id: number;
-  name: string;
-  products?: MercadonaProduct[];
-}
-
-interface MercadonaCategoryDetailResponse {
-  id: number;
-  name: string;
-  categories?: MercadonaSubcategory[];
-}
-
-interface MercadonaProduct {
-  id: string;
-  slug: string;
-  display_name: string;
-  thumbnail: string;
-  share_url: string;
   published: boolean;
-  packaging?: string;
+  unavailable_from?: string | null;
+  unavailable_weekdays?: number[];
+  categories: Array<{ id: number; name: string }>;
   price_instructions: {
     unit_price: string;
-    bulk_price: string;
     reference_price: string;
     reference_format: string;
     unit_size: number;
     size_format: string;
     is_pack: boolean;
-    pack_size?: number;
-    total_units?: number;
-    is_new: boolean;
-    price_decreased: boolean;
-    previous_unit_price?: string;
+    pack_size: number | null;
+    total_units: number | null;
+    approx_size?: boolean;
+    selling_method?: number;
+    previous_unit_price?: string | null;
   };
-  categories: Array<{ id: number; name: string }>;
 }
 
-interface MercadonaCategoriesResponse {
-  count: number;
-  results: MercadonaCategory[];
-}
-
-interface MercadonaCategoryStructure {
+interface MercaCategory {
   id: number;
   name: string;
-  isGeneric: boolean;
-  children?: MercadonaCategoryStructure[];
-  products?: MercadonaProduct[];
+  categories?: MercaCategory[];
+  products?: MercaProduct[];
 }
 
-/**
- * Scraper per a Mercadona
- * Utilitza l'API pública de tienda.mercadona.es
- */
+function money(value: unknown, label: string): number {
+  if (typeof value !== 'string' || !/^\d+(\.\d+)?$/.test(value.trim())) {
+    throw new Error(`Invalid Mercadona ${label}`);
+  }
+  const parsed = Number(value.trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`Invalid Mercadona ${label}`);
+  return parsed;
+}
+
 export class MercadonaScraper extends BaseScraper {
-  private readonly apiUrl = 'https://tienda.mercadona.es/api';
-  private categoriesCache: MercadonaCategory[] | null = null;
-  // Cache per a estructures de categories individuals (Level 2 -> Level 3 mapping)
-  private categoryStructureCache: Map<number, MercadonaCategoryStructure> = new Map();
-  // Mapping L1 -> L2 (Root categories cache)
-  private rootCategoriesCache: Map<number, MercadonaCategory> = new Map();
+  private readonly apiBase = 'https://tienda.mercadona.es/api';
+  private http: AxiosInstance;
+  private categoriesCache: MercaCategory[] | null = null;
+  private subcategoryNameCache = new Map<number, string>();
+  private parentCategoryIds = new Map<number, number>();
+  private catalogCache: ScrapedPrice[] | null = null;
+  private catalogTime = 0;
+  private catalogRequest: Promise<ScrapedPrice[]> | null = null;
+  private nextRequestTime = 0;
+  private static readonly CATALOG_TTL = 2 * 60 * 60 * 1000;
 
-  constructor() {
+  constructor(private warehouse = 'bcn1') {
     super(config);
+    if (!/^[a-z0-9]+$/.test(warehouse)) throw new Error('Invalid Mercadona warehouse');
+    this.http = axios.create({ baseURL: this.apiBase, timeout: 15_000 });
+    this.http.interceptors.request.use(async request => {
+      const start = Math.max(Date.now(), this.nextRequestTime);
+      this.nextRequestTime = start + Math.ceil(1000 / config.rateLimit);
+      const wait = start - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      return request;
+    });
   }
 
-  /**
-   * Obté l'estructura d'una categoria (si té subcategories o productes)
-   * Això permet identificar "Generators" (Level 3) com "Aceite de oliva".
-   */
-  async getCategoryStructure(id: number): Promise<MercadonaCategoryStructure | null> {
-    if (this.categoryStructureCache.has(id)) {
-        return this.categoryStructureCache.get(id)!;
+  async setPostalCode(postalCode: string): Promise<string> {
+    if (!/^\d{5}$/.test(postalCode)) throw new Error('Invalid postal code');
+    const response = await this.http.put('/postal-codes/actions/change-pc/', {
+      new_postal_code: postalCode,
+    });
+    const warehouse: unknown = response.headers['x-customer-wh'];
+    if (typeof warehouse !== 'string' || !/^[a-z0-9]+$/.test(warehouse)) {
+      throw new Error('Mercadona did not confirm the postal-code warehouse');
     }
+    this.warehouse = warehouse;
+    this.categoriesCache = null;
+    this.subcategoryNameCache.clear();
+    this.parentCategoryIds.clear();
+    this.catalogCache = null;
+    this.catalogRequest = null;
+    return warehouse;
+  }
 
-    try {
-        const response = await axios.get<MercadonaCategoryDetailResponse>(
-            `${this.apiUrl}/categories/${id}/`,
-            {
-                params: { lang: 'ca' },
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                }
-            }
-        );
+  private async category(id?: number, warehouse = this.warehouse): Promise<MercaCategory[]> {
+    const { data } = await this.http.get(id === undefined ? '/categories/' : `/categories/${id}/`, {
+      params: { lang: 'es', wh: warehouse },
+    });
+    const categories = id === undefined ? data.results : data.categories;
+    if (!Array.isArray(categories)) throw new Error('Invalid Mercadona category response');
+    return categories;
+  }
 
-        const data = response.data;
-        
-        // Detectem si té subcategories (Level 3) -> Són els nostres "Generics"
-        const hasSubcategories = data.categories && data.categories.length > 0;
-        
-        const structure: MercadonaCategoryStructure = {
-            id: data.id,
-            name: data.name,
-            isGeneric: !hasSubcategories, // Si no té fills, és un generic/fulla
-            children: hasSubcategories ? data.categories!.map(c => ({
-                id: c.id,
-                name: c.name,
-                isGeneric: true, // Level 3 sempre el tractem com generic
-            })) : undefined,
-            products: hasSubcategories ? undefined : (data.categories as any) // Si no té fills de categoria, potser té 'categories' que en realitat són llistes de productes? No, l'estructura varia.
-        };
+  async getCategories(): Promise<MercaCategory[]> {
+    if (this.categoriesCache) return this.categoriesCache;
+    const warehouse = this.warehouse;
+    const categories = await this.category(undefined, warehouse);
+    if (!categories.length) throw new Error('Mercadona returned an empty category tree');
+    if (warehouse !== this.warehouse) throw new Error('Mercadona warehouse changed during request');
+    this.categoriesCache = categories;
+    return categories;
+  }
 
-        // Si és fulla, potser volem obtenir els productes immediatament
-        // En aquesta API, els productes estan dins de 'categories' (que fan de grups de visualització)
-        // ex: cat 420 (Oli oliva) -> categories: [{ products: [...] }]
-        
-        this.categoryStructureCache.set(id, structure);
-        return structure;
-
-    } catch (error) {
-        console.error(`[Mercadona] Error getting structure for ${id}:`, error);
-        return null;
+  private quote(product: MercaProduct, warehouse: string, url: string, category?: string): ScrapedPrice {
+    if (!product || !/^\d+(?:\.\d+)?$/.test(product.id) || !product.display_name?.trim()) {
+      throw new Error(`Invalid Mercadona product identity: ${JSON.stringify({ id: product?.id, name: product?.display_name })}`);
     }
-  }
-
-  /**
-   * Obté totes les categories de Mercadona
-   * Retorna les subcategories (Nivell 2) que són les que tenen productes reals,
-   * per evitar problemes amb categories "contenidor" buides.
-    // Mapping L1 -> L2 (Root categories cache)
-    private rootCategoriesCache: Map<number, MercadonaCategory> = new Map();
-
-  /**
-   * Obté totes les categories de Mercadona (Nivell 1 - Roots)
-   * Aquestes són les categories generals (ex: "Forn i Pastisseria", "Fruita i Verdura")
-   */
-  async getCategories(): Promise<MercadonaCategory[]> {
-    try {
-      if (!this.categoriesCache) {
-        const response = await axios.get<MercadonaCategoriesResponse>(
-          `${this.apiUrl}/categories/`,
-          {
-            params: { lang: 'ca' },
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            }
-          }
-        );
-        this.categoriesCache = response.data.results;
-        
-        // Populate root cache
-        if (this.categoriesCache) {
-            this.categoriesCache.forEach(root => {
-                this.rootCategoriesCache.set(root.id, root);
-            });
-        }
-      }
-
-      // Retrobem directament les categories arrel (Nivell 1)
-      // Mantenim l'estructura original per permetre navegació
-      return this.categoriesCache || [];
-
-    } catch (error) {
-      console.error('[Mercadona] Error obtenint categories:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Obté els productes d'una categoria específica
-   * Gestiona automàticament categories pare (containers) i subcategories reals.
-   */
-  async getCategoryProducts(categoryId: number): Promise<MercadonaProduct[]> {
-    console.log(`[Mercadona] getCategoryProducts called for ID ${categoryId}`);
-    try {
-      // 1. Assegurar que tenim la info de l'arbre de categories per saber si és pare
-      if (!this.categoriesCache) {
-          await this.getCategories();
-      }
-
-      // 2. Comprovar si és una categoria arrel (Pare)
-      // Les categories arrel NO tenen endpoint propi (/categories/ID returns 404),
-      // hem d'iterar sobre els seus fills.
-      const parentCategory = this.categoriesCache?.find(c => c.id === categoryId);
-
-      if (parentCategory && parentCategory.categories && parentCategory.categories.length > 0) {
-        // És una categoria PARE. Iterem els fills.
-        console.log(`[Mercadona] Categoria ${categoryId} és ROOT. Recuperant productes dels fills...`);
-        const products: MercadonaProduct[] = [];
-        
-        // Per performance, limitem a les 3 primeres subcategories inicialment
-        // (O podríem fer-ho totes en paral·lel amb Promise.all si calgués)
-        const subcategoriesToFetch = parentCategory.categories; // .slice(0, 4);
-
-        for (const sub of subcategoriesToFetch) {
-            try {
-                // Fetch directe a la subcategoria (que sí hauria de tenir endpoint)
-                const subProducts = await this.fetchSubCategoryProducts(sub.id);
-                products.push(...subProducts);
-            } catch (err) {
-                console.warn(`[Mercadona] Error parcial en subcategoria ${sub.id}`);
-            }
-        }
-        return products;
-      }
-
-      // 3. Si no és arrel coneguda, assumim que és una subcategoria o ID directe
-      return await this.fetchSubCategoryProducts(categoryId);
-
-    } catch (error) {
-      console.error(`[Mercadona] Error general obtenint categoria ${categoryId}:`, error);
-      return [];
-    }
-  }
-
-  /**
-   * Helper per fer la petició directa a una subcategoria (endpoint final)
-   */
-  private async fetchSubCategoryProducts(subId: number): Promise<MercadonaProduct[]> {
-      const response = await axios.get<MercadonaCategoryDetailResponse>(
-        `${this.apiUrl}/categories/${subId}/`,
-        {
-          params: { lang: 'ca' },
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          }
-        }
-      );
-      
-      const products: MercadonaProduct[] = [];
-      
-      // La resposta directa sol tenir categories filles (nivell 3) amb productes
-      if (response.data.categories) {
-        for (const subcategory of response.data.categories) {
-          if (subcategory.products) {
-            products.push(...subcategory.products);
-          }
-        }
-      }
-      return products;
-  }
-
-  /**
-   * Obté subcategories (drill down).
-   * - Si levelId és Root (L1) -> Retorna fills L2.
-   * - Si levelId és L2 -> Retorna fills L3 (Generics).
-   */
-  async getSubcategories(levelId: number): Promise<{id: string, name: string, image?: string, isGroup?: boolean}[]> {
-    
-    // 1. Check if it is a Root Category (cached)
-    if (this.rootCategoriesCache.has(levelId)) {
-        const root = this.rootCategoriesCache.get(levelId);
-        if (root?.categories) {
-            return root.categories.map((c: MercadonaSubcategory) => ({
-                id: c.id.toString(),
-                name: c.name,
-                isGroup: true // Indica que encara es pot baixar més
-            }));
-        }
-    }
-    
-    // 2. If not root, assume L2 and fetch L3
-    return this.getLevel3Categories(levelId);
-  }
-
-  /**
-   * Obté les subcategories de nivell 3 (Generics) donat un ID de nivell 2.
-   * Ex: Entra 112 (Aceite, vinagre, sal) -> Surt [420 (Aceite oliva), 422 (Aceite girasol)...]
-   */
-  async getLevel3Categories(level2Id: number): Promise<{id: string, name: string, image?: string, isGroup?: boolean}[]> {
-    try {
-        const response = await axios.get<MercadonaCategoryDetailResponse>(
-            `${this.apiUrl}/categories/${level2Id}/`,
-            {
-                params: { lang: 'ca' },
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                }
-            }
-        );
-
-        if (response.data.categories) {
-            return response.data.categories.map(c => ({
-                id: c.id.toString(),
-                name: c.name,
-                // Usem la imatge del primer producte com a representativa
-                image: c.products && c.products.length > 0 ? c.products[0].thumbnail : undefined
-            }));
-        }
-        return [];
-    } catch (error) {
-        console.error(`[Mercadona] Error obtenint Level 3 per ${level2Id}:`, error);
-        return [];
-    }
-  }
-
-  /**
-   * Converteix un producte de Mercadona al format de l'app
-   */
-  private mapProduct(product: MercadonaProduct, categoryName: string): ScrapedPrice {
-    const priceInfo = product.price_instructions;
-    
+    if (typeof product.published !== 'boolean') throw new Error('Missing Mercadona availability');
+    const instructions = product.price_instructions;
+    if (!instructions) throw new Error(`Missing Mercadona price for ${product.id}`);
+    const price = money(instructions.unit_price, `price for ${product.id}`);
+    const pricePerUnit = money(instructions.reference_price, `reference price for ${product.id}`);
+    const size = Number(instructions.unit_size);
+    const fixed = instructions.approx_size === false && instructions.selling_method === 0;
+    const amount = size;
     return {
       productId: `merc-${product.id}`,
       name: product.display_name,
       supermarket: 'Mercadona',
       supermarketId: 'mercadona',
-      price: parseFloat(priceInfo.unit_price),
-      originalPrice: priceInfo.previous_unit_price 
-        ? parseFloat(priceInfo.previous_unit_price) 
-        : undefined,
-      unit: priceInfo.size_format || 'ud',
-      pricePerUnit: parseFloat(priceInfo.reference_price),
-      category: categoryName,
+      price,
+      originalPrice: instructions.previous_unit_price
+        ? money(instructions.previous_unit_price, 'previous price') : undefined,
+      unit: instructions.reference_format.toLowerCase(),
+      pricePerUnit,
+      category: category || product.categories?.[0]?.name || 'Altres',
       imageUrl: product.thumbnail,
-      available: product.published,
+      available: product.published && !product.unavailable_from && !product.unavailable_weekdays?.length,
       scrapedAt: new Date(),
+      source: { provider: 'mercadona-rest', warehouse, url },
+      packageSize: fixed && Number.isFinite(amount) && amount > 0
+        ? { amount, unit: instructions.size_format.toLowerCase() } : undefined,
     };
   }
 
-  async scrapeProducts(categorySlug?: string): Promise<ScrapedPrice[]> {
-    const products: ScrapedPrice[] = [];
-
-    try {
-      console.log('[Mercadona] Obtenint categories...');
-      const categories = await this.getCategories();
-      console.log(`[Mercadona] Trobades ${categories.length} categories`);
-
-      // Si s'especifica una categoria, filtrar
-      const categoriesToScrape = categorySlug
-        ? categories.filter(c => c.name.toLowerCase().includes(categorySlug.toLowerCase()))
-        : categories;
-
-      for (const category of categoriesToScrape) {
-        console.log(`[Mercadona] Processant: ${category.name}`);
-        
-        // Respectar rate limit
-        await this.delay(1000 / this.config.rateLimit);
-        
-        if (category.categories) {
-          for (const subcat of category.categories) {
-            const subcatProducts = await this.getCategoryProducts(subcat.id);
-            
-            for (const product of subcatProducts) {
-              products.push(this.mapProduct(product, category.name));
-            }
-            
-            // Respectar rate limit entre subcategories
-            await this.delay(500);
-          }
-        }
-      }
-
-      console.log(`[Mercadona] Total productes obtinguts: ${products.length}`);
-
-    } catch (error) {
-      console.error('[Mercadona] Error scraping:', error);
-      throw error;
-    }
-
-    return products;
+  private async categoryProducts(categoryId: number, warehouse: string, leafId?: number): Promise<ScrapedPrice[]> {
+    const groups = await this.category(categoryId, warehouse);
+    return groups.filter(group => leafId === undefined || group.id === leafId).flatMap(group => {
+      if (!Array.isArray(group.products)) throw new Error(`Missing Mercadona products in ${categoryId}`);
+      return group.products.filter(product => product.published).map(product =>
+        this.quote(product, warehouse, `${this.apiBase}/categories/${categoryId}/`, group.name),
+      );
+    });
   }
 
-  async scrapeProductDetails(productId: string): Promise<Product | null> {
+  async getCategoryProducts(categoryId: number): Promise<ScrapedPrice[]> {
+    const parentId = this.parentCategoryIds.get(categoryId);
+    return this.categoryProducts(parentId ?? categoryId, this.warehouse, parentId ? categoryId : undefined);
+  }
+
+  async loadFullCatalog(): Promise<ScrapedPrice[]> {
+    if (this.catalogCache && Date.now() - this.catalogTime < MercadonaScraper.CATALOG_TTL) {
+      return this.catalogCache;
+    }
+    if (this.catalogRequest) return this.catalogRequest;
+    const warehouse = this.warehouse;
+    const request = (async () => {
+      const categories = await this.getCategories();
+      const ids = [...new Set(categories.flatMap(category => category.categories?.map(sub => sub.id) || []))];
+      if (!ids.length) throw new Error('Mercadona has no catalog categories');
+      const products = new Map<string, ScrapedPrice>();
+      for (let index = 0; index < ids.length; index += 3) {
+        const batches = await Promise.all(ids.slice(index, index + 3).map(id => this.categoryProducts(id, warehouse)));
+        for (const product of batches.flat()) products.set(product.productId, product);
+      }
+      if (warehouse !== this.warehouse) throw new Error('Mercadona warehouse changed during catalog load');
+      if (!products.size) throw new Error('Mercadona returned an empty catalog');
+      const catalog = [...products.values()];
+      this.catalogCache = catalog;
+      this.catalogTime = Date.now();
+      return catalog;
+    })();
+    this.catalogRequest = request;
     try {
-      // L'ID intern és sense prefix
-      const id = productId.replace('merc-', '');
-      const response = await axios.get(`${this.apiUrl}/products/${id}/`);
-      
-      const data = response.data;
-      return {
-        id: `merc-${data.id}`,
-        name: data.display_name,
-        normalizedName: this.normalizeProductName(data.display_name),
-        brand: this.extractBrand(data.display_name),
-        category: data.categories?.[0]?.name || 'Altres',
-        description: data.details?.description,
-        imageUrl: data.thumbnail,
-        unit: data.price_instructions?.size_format || 'ud',
-        size: data.price_instructions?.unit_size,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-    } catch (error) {
-      console.error('[Mercadona] Error obtenint detalls:', error);
-      return null;
+      return await request;
+    } finally {
+      if (this.catalogRequest === request) this.catalogRequest = null;
     }
   }
 
   async searchProducts(query: string): Promise<ScrapedPrice[]> {
-    console.log(`[Mercadona] Cercant via Algolia: ${query}...`);
-    
-    try {
-      const response = await axios.post<AlgoliaResponse>(
-        `https://${ALGOLIA_APP_ID.toLowerCase()}-dsn.algolia.net/1/indexes/products_prod_${DEFAULT_WAREHOUSE}_es/query`,
-        {
-          params: `query=${encodeURIComponent(query)}&hitsPerPage=50`
-        },
-        {
-          headers: {
-            'X-Algolia-Application-Id': ALGOLIA_APP_ID,
-            'X-Algolia-API-Key': ALGOLIA_API_KEY,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      console.log(`[Mercadona] Algolia trobats: ${response.data.nbHits} resultats`);
-
-      return response.data.hits.map(hit => {
-        const priceInfo = hit.price_instructions;
-        const categoryName = hit.categories?.[0]?.name || 'Altres';
-        
-        return {
-          productId: `merc-${hit.id}`,
-          name: hit.display_name,
-          supermarket: 'Mercadona',
-          supermarketId: 'mercadona',
-          price: parseFloat(priceInfo.unit_price),
-          originalPrice: priceInfo.previous_unit_price 
-            ? parseFloat(priceInfo.previous_unit_price) 
-            : undefined,
-          unit: priceInfo.size_format || 'ud',
-          pricePerUnit: parseFloat(priceInfo.reference_price),
-          category: categoryName,
-          imageUrl: hit.thumbnail,
-          available: true,
-          scrapedAt: new Date(),
-        };
-      });
-    } catch (error) {
-      console.error('[Mercadona] Error cerca Algolia:', error);
-      // Fallback a cerca local
-      console.log('[Mercadona] Fallback a cerca local...');
-      const allProducts = await this.scrapeProducts();
-      const normalizedQuery = query.toLowerCase();
-      return allProducts.filter(p => 
-        p.name.toLowerCase().includes(normalizedQuery)
-      );
-    }
+    if (!query.trim()) throw new Error('Mercadona search query must not be empty');
+    const words = this.normalizeProductName(query).split(' ').filter(Boolean);
+    if (!words.length) throw new Error('Mercadona search query must contain words');
+    const catalog = await this.loadFullCatalog();
+    return catalog.filter(product => {
+      const name = this.normalizeProductName(product.name);
+      return words.every(word => name.includes(word));
+    });
   }
 
-  /**
-   * Cerca producte per codi de barres (EAN)
-   */
-  async searchByEAN(ean: string): Promise<ScrapedPrice | null> {
-    console.log(`[Mercadona] Cercant EAN: ${ean}...`);
-    
-    try {
-      const response = await axios.post<AlgoliaResponse>(
-        `https://${ALGOLIA_APP_ID.toLowerCase()}-dsn.algolia.net/1/indexes/products_prod_${DEFAULT_WAREHOUSE}_es/query`,
-        {
-          params: `query=${ean}&hitsPerPage=10`
-        },
-        {
-          headers: {
-            'X-Algolia-Application-Id': ALGOLIA_APP_ID,
-            'X-Algolia-API-Key': ALGOLIA_API_KEY,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      // Buscar per nom que contingui el codi (Algolia no indexa EAN directament)
-      const match = response.data.hits[0];
-      
-      if (!match) {
-        return null;
-      }
-
-      const priceInfo = match.price_instructions;
-      const categoryName = match.categories?.[0]?.name || 'Altres';
-
-      return {
-        productId: `merc-${match.id}`,
-        name: match.display_name,
-        supermarket: 'Mercadona',
-        supermarketId: 'mercadona',
-        price: parseFloat(priceInfo.unit_price),
-        originalPrice: priceInfo.previous_unit_price 
-          ? parseFloat(priceInfo.previous_unit_price) 
-          : undefined,
-        unit: priceInfo.size_format || 'ud',
-        pricePerUnit: parseFloat(priceInfo.reference_price),
-        category: categoryName,
-        imageUrl: match.thumbnail,
-        available: true,
-        scrapedAt: new Date(),
-      };
-    } catch (error) {
-      console.error('[Mercadona] Error cerca EAN:', error);
-      return null;
-    }
+  async scrapeProducts(category?: string): Promise<ScrapedPrice[]> {
+    const catalog = await this.loadFullCatalog();
+    return category ? catalog.filter(product =>
+      this.normalizeProductName(product.category).includes(this.normalizeProductName(category)),
+    ) : catalog;
   }
 
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  async getProductPrice(productId: string): Promise<ScrapedPrice> {
+    const id = productId.replace(/^merc-/, '');
+    if (!/^\d+(?:\.\d+)?$/.test(id)) throw new Error('Invalid Mercadona product ID');
+    const warehouse = this.warehouse;
+    const url = `${this.apiBase}/products/${id}/`;
+    const { data } = await this.http.get<MercaProduct>(`/products/${id}/`, {
+      params: { lang: 'es', wh: warehouse },
+    });
+    if (data.id !== id) throw new Error('Mercadona returned a different product');
+    return this.quote(data, warehouse, url);
+  }
+
+  async scrapeProductDetails(productId: string): Promise<Product | null> {
+    const quote = await this.getProductPrice(productId);
+    return {
+      id: quote.productId,
+      name: quote.name,
+      normalizedName: this.normalizeProductName(quote.name),
+      category: quote.category,
+      imageUrl: quote.imageUrl,
+      unit: quote.packageSize?.unit || quote.unit,
+      size: quote.packageSize?.amount,
+      createdAt: quote.scrapedAt,
+      updatedAt: quote.scrapedAt,
+    };
+  }
+
+  async searchByEAN(_ean: string): Promise<ScrapedPrice | null> {
+    throw new Error('EAN lookup is not supported by the authoritative Mercadona catalog');
+  }
+
+  async getSubcategories(parentId: number): Promise<{ id: string; name: string; image?: string; isGroup?: boolean }[]> {
+    const roots = await this.getCategories();
+    const parent = roots.find(category => category.id === parentId);
+    const knownGroup = roots.some(root => root.categories?.some(sub => sub.id === parentId));
+    if (!parent && !knownGroup) return [];
+    const groups = parent?.categories || await this.category(parentId);
+    for (const group of groups) {
+      this.subcategoryNameCache.set(group.id, group.name);
+      if (!parent) this.parentCategoryIds.set(group.id, parentId);
+    }
+    return groups.map(group => ({
+      id: String(group.id), name: group.name, image: group.products?.[0]?.thumbnail, isGroup: true,
+    }));
+  }
+
+  getSubcategoryName(catId: number): string | null {
+    if (this.subcategoryNameCache.has(catId)) return this.subcategoryNameCache.get(catId)!;
+    for (const root of this.categoriesCache || []) {
+      if (root.id === catId) return root.name;
+      const sub = root.categories?.find(category => category.id === catId);
+      if (sub) return sub.name;
+    }
+    return null;
+  }
+
+  async getCategoryProductsByName(categoryName: string): Promise<ScrapedPrice[]> {
+    return this.searchProducts(categoryName);
   }
 
   private normalizeProductName(name: string): string {
-    return name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  private extractBrand(name: string): string | undefined {
-    // Marques comunes de Mercadona
-    const brands = ['Hacendado', 'Deliplus', 'Bosque Verde', 'Compy', 'Asturiana', 'Puleva'];
-    for (const brand of brands) {
-      if (name.includes(brand)) {
-        return brand;
-      }
-    }
-    return undefined;
+    return name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   }
 }
 

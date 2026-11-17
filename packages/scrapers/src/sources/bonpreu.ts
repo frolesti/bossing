@@ -1,103 +1,107 @@
-import puppeteer from 'puppeteer';
+import puppeteer, { type HTTPResponse } from 'puppeteer';
 import { BaseScraper, type ScraperConfig } from '../base.js';
 import type { ScrapedPrice } from '@bossing/shared';
 
 const config: ScraperConfig = {
   name: 'Bonpreu',
   baseUrl: 'https://www.compraonline.bonpreuesclat.cat',
-  rateLimit: 5,
+  rateLimit: 1,
   enabled: true,
 };
 
+function productUrl(value: string, identifier: string): URL {
+  const url = new URL(value, config.baseUrl);
+  if (!/^\d+$/.test(identifier) || url.protocol !== 'https:' || url.hostname !== 'www.compraonline.bonpreuesclat.cat' ||
+    url.port || url.username || url.password || url.search || url.hash ||
+    !new RegExp(`^/products/[^/]+/${identifier}$`).test(url.pathname)) throw new Error('Unconfirmed Bonpreu product identity');
+  return url;
+}
+
+export function normalizeBonpreuProduct(value: unknown, sourceUrl: string, scrapedAt = new Date()): ScrapedPrice {
+  const product = value as { '@type'?: string; sku?: string; name?: string; description?: string; size?: string; image?: string[];
+    offers?: { '@type'?: string; price?: string; priceCurrency?: string; availability?: string } } | null;
+  if (!product || product['@type'] !== 'Product' || typeof product.sku !== 'string' || !/^\d+$/.test(product.sku) ||
+    typeof product.name !== 'string' || !product.name.trim()) throw new Error('Unconfirmed Bonpreu product identity');
+  const source = productUrl(sourceUrl, product.sku);
+  const offer = product.offers;
+  if (!offer || offer['@type'] !== 'Offer' || offer.priceCurrency !== 'EUR' || typeof offer.price !== 'string' ||
+    !/^\d+(?:\.\d{1,2})?$/.test(offer.price) || !Number.isFinite(Number(offer.price)) || Number(offer.price) <= 0) {
+    throw new Error('Invalid Bonpreu euro price');
+  }
+  if (typeof offer.availability !== 'string' || !/^https:\/\/schema\.org\/(InStock|OutOfStock)$/.test(offer.availability)) {
+    throw new Error('Unconfirmed Bonpreu availability');
+  }
+  const packaging = typeof product.size === 'string'
+    ? product.size.trim().toLowerCase().match(/^(?:(\d+)\s*[x×]\s*)?(\d+(?:[.,]\d+)?)\s*(kg|g|ml|cl|l|u|ud|unitats?|per paquet|dotzena|dotzenes)$/) : null;
+  if (!packaging || /aprox|pes\s+variable|a\s+granel/i.test(`${product.name} ${product.description || ''}`)) {
+    throw new Error('Unconfirmed Bonpreu packaging');
+  }
+  const sourceUnit = packaging[3];
+  const unit = /^(kg|g)$/.test(sourceUnit) ? 'kg' : /^(ml|cl|l)$/.test(sourceUnit) ? 'l' : 'ud';
+  const scale = sourceUnit === 'g' || sourceUnit === 'ml' ? 0.001 : sourceUnit === 'cl' ? 0.01 : sourceUnit.startsWith('dotzen') ? 12 : 1;
+  const amount = Number(packaging[1] || 1) * Number(packaging[2].replace(',', '.')) * scale;
+  if (!Number.isFinite(amount) || amount <= 0 || (unit === 'ud' && !Number.isInteger(amount))) throw new Error('Invalid Bonpreu package amount');
+  const price = Number(offer.price);
+  return { productId: `bonpreu-${product.sku}`, name: product.name.trim(), supermarket: 'Bonpreu', supermarketId: 'bonpreu',
+    price, pricePerUnit: price / amount, unit, category: 'Alimentació', imageUrl: Array.isArray(product.image) ? product.image[0] : undefined,
+    available: offer.availability.endsWith('/InStock'), scrapedAt, packageSize: { amount, unit },
+    source: { provider: 'bonpreu-storefront', warehouse: 'public-catalog', url: source.href } };
+}
+
 export class BonpreuScraper extends BaseScraper {
+  private nextRequestAt = 0;
+
   constructor() {
     super(config);
   }
 
-  async searchProducts(query: string): Promise<ScrapedPrice[]> {
-    console.log(`[Bonpreu] Searching for: ${query}...`);
-    let browser;
+  private async readPage<T>(url: string, extract: (page: import('puppeteer').Page) => Promise<T>): Promise<T> {
+    const now = Date.now();
+    const scheduledAt = Math.max(now, this.nextRequestAt);
+    this.nextRequestAt = scheduledAt + 1000 / this.config.rateLimit;
+    if (scheduledAt > now) await new Promise(resolve => setTimeout(resolve, scheduledAt - now));
+    const browser = await puppeteer.launch({ headless: 'new' });
     try {
-      browser = await puppeteer.launch({
-        headless: "new",
-        args: [
-          '--no-sandbox', 
-          '--disable-setuid-sandbox', 
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--window-size=1920,1080'
-        ]
-      });
-
       const page = await browser.newPage();
-      await page.setViewport({ width: 1920, height: 1080 });
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-      const gatheredProducts: ScrapedPrice[] = [];
-
-      // Intercept API response
-      page.on('response', async (response) => {
-        const url = response.url();
-        // Match the API endpoint seen in debug: api/webproductpagews/v1/search/products or similar variants
-        // Adjusting regex to be flexible based on debug output "api/webproductpagews/v6/products"
-        if (url.includes('api/webproductpagews') && url.includes('products') && response.request().method() !== 'OPTIONS') {
-          try {
-            const contentType = response.headers()['content-type'];
-            if (!contentType || !contentType.includes('application/json')) return;
-
-            const json = await response.json();
-            
-            // Expected structure: { data: { products: [...] } } or just { products: [...] }
-            let items = json.data?.products || json.products || [];
-            
-            items.forEach((p: any) => {
-                const priceVal = p.price?.amount || 0;
-                
-                gatheredProducts.push({
-                    productId: `bonpreu-${p.id}`,
-                    name: p.name || p.displayName,
-                    supermarket: 'Bonpreu',
-                    supermarketId: 'bonpreu',
-                    price: priceVal,
-                    originalPrice: priceVal,
-                    // Try to guess unit
-                    unit: p.price?.perUnit ? 'unit' : 'ud', 
-                    pricePerUnit: p.price?.perUnit || priceVal,
-                    category: 'Search',
-                    // Image might be in images[] array
-                    imageUrl: p.image?.url || (p.images && p.images[0]?.url) || '',
-                    available: !p.outOfStock,
-                    scrapedAt: new Date()
-                });
-            });
-          } catch (err) {
-            // Ignore parse errors
-          }
-        }
-      });
-
-      const searchUrl = `${config.baseUrl}/products/search?q=${encodeURIComponent(query)}`;
-      // Change to domcontentloaded for speed (don't wait for analytics/chat)
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      
-      // Wait a bit for the API to fire and respond
-      await new Promise(resolve => setTimeout(resolve, 5000));
-
-      console.log(`[Bonpreu] Found ${gatheredProducts.length} products`);
-      return gatheredProducts;
-
-    } catch (error) {
-      console.error('[Bonpreu] Error:', error);
-      return [];
-    } finally {
-      if (browser) await browser.close();
-    }
+      this.checkResponse(await page.goto(url, { waitUntil: 'networkidle2', timeout: 30_000 }));
+      if (new URL(page.url()).origin !== config.baseUrl) throw new Error('Bonpreu redirected away from its storefront');
+      return await extract(page);
+    } finally { await browser.close(); }
   }
 
-  // Stubs
+  async getProductPrice(productId: string, sourceUrl: string): Promise<ScrapedPrice> {
+    if (!/^bonpreu-\d+$/.test(productId)) throw new Error('Invalid Bonpreu product identifier');
+    const url = productUrl(sourceUrl, productId.slice(8)).href;
+    const documents = await this.readPage(url, page => page.$$eval('script[type="application/ld+json"]', elements =>
+      elements.map(element => JSON.parse(element.textContent || 'null'))));
+    const products = documents.filter(value => value?.['@type'] === 'Product');
+    if (products.length !== 1) throw new Error('Missing or ambiguous Bonpreu product data');
+    return normalizeBonpreuProduct(products[0], url);
+  }
+
+  async searchProducts(query: string): Promise<ScrapedPrice[]> {
+    const url = `${config.baseUrl}/search?${new URLSearchParams({ q: query })}`;
+    const links = await this.readPage(url, page => page.$$eval('main a[href*="/products/"]', elements =>
+      [...new Set(elements.map(element => element.getAttribute('href')).filter((value): value is string => !!value))].slice(0, 12)));
+    if (!links.length) throw new Error('No verifiable Bonpreu search results');
+    const quotes: ScrapedPrice[] = [];
+    for (const link of links) {
+      const identifier = new URL(link, config.baseUrl).pathname.match(/^\/products\/[^/]+\/(\d+)$/)?.[1];
+      if (!identifier) throw new Error('Invalid Bonpreu search identity');
+      quotes.push(await this.getProductPrice(`bonpreu-${identifier}`, link));
+    }
+    return quotes;
+  }
+
+  private checkResponse(response: HTTPResponse | null): void {
+    if (!response || response.status() >= 400) throw Object.assign(new Error(`Bonpreu HTTP ${response?.status() || 'unavailable'}`), {
+      response: { status: response?.status(), headers: { 'retry-after': response?.headers()['retry-after'] } },
+    });
+  }
+
   async getCategories() { return []; }
   async getCategoryProducts() { return []; }
-  async scrapeProducts() { return []; }
+  async scrapeProducts(): Promise<ScrapedPrice[]> { throw new Error('Bonpreu full-catalog capture is not supported'); }
   async scrapeProductDetails() { return null; }
 }
 
